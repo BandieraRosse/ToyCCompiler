@@ -302,6 +302,7 @@ typedef struct {
     int element_size;        /* 指针变量的元素大小（用于指针运算：int*→4, char**→8） */
     int base_elem_size;      /* 数组变量：单个元素的类型尺寸（多维数组的内层 elem_size） */
     int scope_depth;         /* 声明时的作用域深度（用于块作用域变量阴影） */
+    int is_array;            /* 1 表示数组类型（访问时退化为指针） */
 } LocalVar;
 
 extern LocalVar locals[MAX_LOCALS];

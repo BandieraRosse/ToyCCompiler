@@ -628,8 +628,17 @@ static void pp_buf_impl(const char *s, int len, OutBuf *out, int depth, int *had
                                 }
                                 /* 跳过 #（stringify 运算符—TODO：支持真正字符串化） */
                                 if (rp[ri]=='#' && ri+1 < rl && rp[ri+1] != '#') { ri++; continue; }
-                                /* ## 通用粘贴（非 ,## 的情况）：跳过 ## */
-                                if (ri+1 < rl && rp[ri]=='#' && rp[ri+1]=='#') { ri += 2; continue; }
+                                /* ## 通用粘贴：移除两侧空白，连接 token */
+                                if (ri+1 < rl && rp[ri]=='#' && rp[ri+1]=='#') {
+                                    ri += 2;  /* 跳过 ## */
+                                    /* 跳过 ## 后的空白 */
+                                    while (ri < rl && (rp[ri] == ' ' || rp[ri] == '\t')) ri++;
+                                    /* 去掉 ## 前已写入 temp 的尾部空白 */
+                                    while (temp.len > 0 &&
+                                           (temp.data[temp.len-1] == ' ' || temp.data[temp.len-1] == '\t'))
+                                        temp.len--;
+                                    continue;
+                                }
                                 /* 检查参数名 */
                                 if (pp_id(rp[ri])) {
                                     int rs = ri;

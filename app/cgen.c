@@ -287,6 +287,10 @@ static void collect_locals(AstNode *node) {
             locals[local_count].element_size = node->elem_size;
             locals[local_count].base_elem_size = node->base_elem_size;
             locals[local_count].scope_depth = scope_depth;
+            /* 判断是否为数组：type_size 不等于指针大小(8)且 ival 为正数 */
+            locals[local_count].is_array =
+                (node->type_size != 8 || node->ival > 8) && node->ival > 0 &&
+                node->elem_size > 0;
             local_count++;
         }
         break;

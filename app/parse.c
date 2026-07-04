@@ -36,10 +36,11 @@ static int last_struct_member_count = 0;
 /* ─── 局部变量类型追踪（解析阶段用，供 .m 成员访问计算偏移） ─── */
 
 #define MAX_PVARS 4096
-static const char *pvar_name[MAX_PVARS];   /* 变量名 */
-static const char *pvar_tag[MAX_PVARS];    /* struct 标签 */
-static int pvar_is_float_arr[MAX_PVARS];  /* 是否为 double 类型 */
-static int pvar_size_arr[MAX_PVARS];      /* 变量大小（用于 sizeof） */
+static const char *pvar_name[MAX_PVARS];       /* 变量名 */
+static const char *pvar_tag[MAX_PVARS];        /* struct 标签 */
+static int pvar_is_float_arr[MAX_PVARS];      /* 是否为 double 类型 */
+static int pvar_size_arr[MAX_PVARS];          /* 变量大小（用于 sizeof） */
+static int pvar_elem_size_arr[MAX_PVARS];     /* 数组元素大小（0=非数组） */
 static int pvar_count;
 
 static void pvar_add_ex(const char *name, const char *tag, int is_float, int size) {
@@ -48,8 +49,21 @@ static void pvar_add_ex(const char *name, const char *tag, int is_float, int siz
         pvar_tag[pvar_count] = tag;
         pvar_is_float_arr[pvar_count] = is_float;
         pvar_size_arr[pvar_count] = size;
+        pvar_elem_size_arr[pvar_count] = 0;
         pvar_count++;
     }
+}
+static void pvar_set_elem_size(const char *name, int elem_size) {
+    int i;
+    for (i = 0; i < pvar_count; i++)
+        if (strcmp(pvar_name[i], name) == 0)
+            { pvar_elem_size_arr[i] = elem_size; return; }
+}
+static int pvar_find_elem_size(const char *name) {
+    int i;
+    for (i = 0; i < pvar_count; i++)
+        if (strcmp(pvar_name[i], name) == 0) return pvar_elem_size_arr[i];
+    return 0;
 }
 #define pvar_add(name, tag, is_float) pvar_add_ex(name, tag, is_float, 0)
 static const char *pvar_find_tag(const char *name) {
@@ -420,6 +434,9 @@ static AstNode *parse_postfix(Parser *p) {
                 /* 回退路径：parse_expr 返回 NULL 时尝试类型 */
                 if (*tail == NULL && call->name) {
                     int tsz = parse_type_specifier(p);
+                    /* 处理 const 后的指针星号 */
+                    while (peek(p).kind == TOK_STAR || peek(p).kind == TOK_CONST)
+                        { if (peek(p).kind == TOK_STAR) tsz = 8; consume(p); }
                     if (tsz > 0) {
                         *tail = new_ast(p, AST_CONSTANT);
                         (*tail)->ival = tsz;
@@ -661,8 +678,14 @@ static AstNode *parse_unary(Parser *p) {
             n->ival = 8;
             if (sexpr && sexpr->kind == AST_VAR && sexpr->name) {
                 int vsize = pvar_find_size(sexpr->name);
-                if (vsize > 0 && vsize != 8)
+                if (vsize > 0)
                     n->ival = vsize;
+            }
+            /* sizeof(arr[i]) — 数组下标表达式：返回元素类型大小 */
+            if (sexpr && sexpr->kind == AST_BINOP && sexpr->op == TOK_LBRACKET &&
+                sexpr->left && sexpr->left->kind == AST_VAR && sexpr->left->name) {
+                int es = pvar_find_elem_size(sexpr->left->name);
+                if (es > 0) n->ival = es;
             }
         } else {
             n->ival = 4;
@@ -1000,16 +1023,33 @@ static int parse_struct_body(Parser *p, Member *members, int *out_count) {
         Token id = peek(p);
         if (id.kind == TOK_IDENT) {
             consume(p);
+            /* 处理数组后缀 [N]（在注册成员前计算完整大小） */
+            int member_sz = sz;
+            if (peek(p).kind == TOK_LBRACKET) {
+                consume(p);
+                if (peek(p).kind == TOK_NUMBER && peek(p).ival > 0) {
+                    member_sz *= peek(p).ival;
+                    consume(p);
+                }
+                int d = 1;
+                while (d > 0 && peek(p).kind != TOK_EOF) {
+                    if (peek(p).kind == TOK_LBRACKET) d++;
+                    if (peek(p).kind == TOK_RBRACKET) d--;
+                    if (d) consume(p);
+                }
+                if (peek(p).kind == TOK_RBRACKET) consume(p);
+            }
             if (count < MAX_MEMBERS) {
                 /* 按类型自然对齐（指针/long long/double=8 字节对齐） */
-                int member_align = (sz >= 8) ? 8 : (sz >= 4) ? 4 : (sz >= 2) ? 2 : 1;
+                int member_align = (member_sz >= 8) ? 8 : (member_sz >= 4) ? 4 : (member_sz >= 2) ? 2 : 1;
                 offset = (offset + member_align - 1) & ~(member_align - 1);
                 members[count].name = arena_strdup(p->arena, id.start, id.len);
                 members[count].offset = offset;
-                members[count].size = sz;
+                members[count].size = member_sz;
                 count++;
-                offset += sz;
+                offset += member_sz;
             }
+            sz = member_sz;  /* 逗号后成员使用相同的完整大小 */
         }
 
         /* 关闭函数指针的 ) 和参数列表 */
@@ -1029,16 +1069,6 @@ static int parse_struct_body(Parser *p, Member *members, int *out_count) {
         /* 跳过位域 :N */
         if (peek(p).kind == TOK_COLON) { consume(p);
             while (peek(p).kind != TOK_SEMI && peek(p).kind != TOK_EOF) consume(p); }
-        /* 跳过数组 [...] */
-        if (peek(p).kind == TOK_LBRACKET) { consume(p);
-            int d = 1;
-            while (d > 0 && peek(p).kind != TOK_EOF) {
-                if (peek(p).kind == TOK_LBRACKET) d++;
-                if (peek(p).kind == TOK_RBRACKET) d--;
-                if (d) consume(p);
-            }
-            if (peek(p).kind == TOK_RBRACKET) consume(p);
-        }
 
         /* 逗号分隔的成员：int a, b, c; */
         while (peek(p).kind == TOK_COMMA) {
@@ -1047,25 +1077,32 @@ static int parse_struct_body(Parser *p, Member *members, int *out_count) {
             Token cid = peek(p);
             if (cid.kind == TOK_IDENT) {
                 consume(p);
+                /* 处理逗号后成员的数组后缀 [N] */
+                int member_sz = sz;
+                if (peek(p).kind == TOK_LBRACKET) {
+                    consume(p);
+                    if (peek(p).kind == TOK_NUMBER && peek(p).ival > 0) {
+                        member_sz *= peek(p).ival;
+                        consume(p);
+                    }
+                    int d2 = 1;
+                    while (d2 > 0 && peek(p).kind != TOK_EOF) {
+                        if (peek(p).kind == TOK_LBRACKET) d2++;
+                        if (peek(p).kind == TOK_RBRACKET) d2--;
+                        if (d2) consume(p);
+                    }
+                    if (peek(p).kind == TOK_RBRACKET) consume(p);
+                }
                 if (count < MAX_MEMBERS) {
-                    int member_align = (sz >= 8) ? 8 : (sz >= 4) ? 4 : (sz >= 2) ? 2 : 1;
+                    int member_align = (member_sz >= 8) ? 8 : (member_sz >= 4) ? 4 : (member_sz >= 2) ? 2 : 1;
                     offset = (offset + member_align - 1) & ~(member_align - 1);
                     members[count].name = arena_strdup(p->arena, cid.start, cid.len);
                     members[count].offset = offset;
-                    members[count].size = sz;
+                    members[count].size = member_sz;
                     count++;
-                    offset += sz;
+                    offset += member_sz;
                 }
-            }
-            /* 跳过数组 [...] 在逗号后成员上 */
-            if (peek(p).kind == TOK_LBRACKET) { consume(p);
-                int d2 = 1;
-                while (d2 > 0 && peek(p).kind != TOK_EOF) {
-                    if (peek(p).kind == TOK_LBRACKET) d2++;
-                    if (peek(p).kind == TOK_RBRACKET) d2--;
-                    if (d2) consume(p);
-                }
-                if (peek(p).kind == TOK_RBRACKET) consume(p);
+                sz = member_sz;
             }
         }
 
@@ -1640,6 +1677,9 @@ AstNode *parse_compound_statement(Parser *p) {
                         decl->elem_size = decl->ival / first_dim; /* row size */
                     else
                         decl->elem_size = elem_ts;
+                    /* 注册数组元素大小到 pvar（供 sizeof(arr[i]) 使用） */
+                    if (decl->name && *decl->name)
+                        pvar_set_elem_size(decl->name, elem_ts);
                 } else {
                     if (dv_ptrs > 0 && bracket_count > 0) {
                         decl->elem_size = 8;
@@ -1700,6 +1740,10 @@ AstNode *parse_compound_statement(Parser *p) {
                             slen++; /* 包含 null 终止符 */
                             decl->ival = slen;
                             decl->type_size = slen;
+                            decl->elem_size = ts;
+                            decl->base_elem_size = ts;
+                            if (decl->name && *decl->name)
+                                pvar_set_elem_size(decl->name, ts);
                         }
                     }
                 }
@@ -2227,7 +2271,9 @@ AstNode *parse_program(Parser *p) {
                     Token gv_name = consume(p);
                     /* 处理数组后缀 [N][M]...（多层） */
                     int gv_arr_len = 1;
+                    int gv_bracket_count = 0;
                     while (peek(p).kind == TOK_LBRACKET) {
+                        gv_bracket_count++;
                         consume(p);
                         if (peek(p).kind == TOK_NUMBER) {
                             gv_arr_len *= peek(p).ival;
@@ -2238,10 +2284,13 @@ AstNode *parse_program(Parser *p) {
                     /* 计算总大小 */
                     int gv_unit = gv_ptrs > 0 ? 8 : (typesize > 0 ? typesize : 4);
                     int gv_total = gv_arr_len > 1 ? gv_unit * gv_arr_len : gv_unit;
+                    int gv_is_array = (gv_bracket_count > 0);
                     /* 注册 struct 标签和大小（供 sizeof 查找） */
                     {
                         const char *gvn = arena_strdup(p->arena, gv_name.start, gv_name.len);
                         pvar_add_ex(gvn, global_typedef_tag ? global_typedef_tag : (last_struct_tag ? last_struct_tag : ""), 0, gv_total);
+                        if (gv_is_array)
+                            pvar_set_elem_size(gvn, gv_unit);
                         if (pvar_count > 3800) {
                             int _na = 0; while (gvn[_na]) _na++;
                             __write(2, "PVAR_FULL:", 10);
