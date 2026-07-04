@@ -402,9 +402,9 @@ static void cgen_for(AstNode *stmt) {
                             emit1(0xF2); emit1(0x0F); emit1(0x11);
                             emit1(0x45); emit1(locals[i].offset & 0xFF);
                         } else if (locals[i].size == 8) {
-                            emit1(0x48); emit1(0x89); emit1(0x45); emit1(locals[i].offset & 0xFF);
+                            store_rax_to_rbp(locals[i].offset);
                         } else {
-                            emit1(0x89); emit1(0x45); emit1(locals[i].offset & 0xFF);
+                            store_eax_to_rbp(locals[i].offset);
                         }
                         break;
                     }
@@ -606,9 +606,9 @@ static void cgen_stmt(AstNode *stmt) {
                             emit1(0xF2); emit1(0x0F); emit1(0x11);
                             emit1(0x45); emit1(locals[i].offset & 0xFF);
                         } else if (locals[i].size == 8) {
-                            emit1(0x48); emit1(0x89); emit1(0x45); emit1(locals[i].offset & 0xFF);
+                            store_rax_to_rbp(locals[i].offset);
                         } else {
-                            emit1(0x89); emit1(0x45); emit1(locals[i].offset & 0xFF);
+                            store_eax_to_rbp(locals[i].offset);
                         }
                         break;
                     }
@@ -729,16 +729,16 @@ static void cgen_func_def(AstNode *func) {
                                 int sd = 0x10 + (int_reg - 6) * 8;
                                 if (param_size == 1) {
                                     e1(0x0F); e1(0xB6); e1(0x45); e1(sd & 0xFF); /* movzx eax, byte [rbp+sd] */
-                                    e1(0x88); e1(0x45); e1(locals[i].offset & 0xFF); /* mov [rbp+off], al */
+                                    emit_store_rbp8(locals[i].offset); /* mov [rbp+off], al */
                                 } else if (param_size == 2) {
                                     e1(0x0F); e1(0xB7); e1(0x45); e1(sd & 0xFF); /* movzx eax, word [rbp+sd] */
-                                    e1(0x66); e1(0x89); e1(0x45); e1(locals[i].offset & 0xFF); /* mov [rbp+off], ax */
+                                    emit_store_rbp16(locals[i].offset); /* mov [rbp+off], ax */
                                 } else if (use64) {
-                                    e1(0x48); e1(0x8B); e1(0x45); e1(sd & 0xFF);       /* mov rax, [rbp+sd] */
-                                    e1(0x48); e1(0x89); e1(0x45); e1(locals[i].offset & 0xFF); /* mov [rbp+off], rax */
+                                    load_rax_from_rbp(sd);       /* mov rax, [rbp+sd] */
+                                    store_rax_to_rbp(locals[i].offset); /* mov [rbp+off], rax */
                                 } else {
                                     e1(0x8B); e1(0x45); e1(sd & 0xFF);       /* mov eax, [rbp+sd] */
-                                    e1(0x89); e1(0x45); e1(locals[i].offset & 0xFF); /* mov [rbp+off], eax */
+                                    store_eax_to_rbp(locals[i].offset); /* mov [rbp+off], eax */
                                 }
                             }
                             int_reg++;
@@ -753,12 +753,12 @@ static void cgen_func_def(AstNode *func) {
     /* 可变参数函数：保存 6 个 GP 寄存器到寄存器保存区 */
     if (is_variadic) {
         int sb = reg_save_offset;
-        e1(0x48); e1(0x89); e1(0x7D); e1(sb & 0xFF);
-        e1(0x48); e1(0x89); e1(0x75); e1((sb + 8) & 0xFF);
-        e1(0x48); e1(0x89); e1(0x55); e1((sb + 16) & 0xFF);
-        e1(0x48); e1(0x89); e1(0x4D); e1((sb + 24) & 0xFF);
-        e1(0x4C); e1(0x89); e1(0x45); e1((sb + 32) & 0xFF);
-        e1(0x4C); e1(0x89); e1(0x4D); e1((sb + 40) & 0xFF);
+        emit_store_rbp64(7, sb);/* rdi */
+        emit_store_rbp64(6, sb + 8);/* rsi */
+        emit_store_rbp64(2, sb + 16);/* rdx */
+        emit_store_rbp64(1, sb + 24);/* rcx */
+        /* r8 */ e1(0x4C); e1(0x89); if (disp8_fits(sb+32)) { e1(0x45); e1((sb+32)&0xFF); } else { e1(0x85); e4(sb+32); }
+        /* r9 */ e1(0x4C); e1(0x89); if (disp8_fits(sb+40)) { e1(0x4D); e1((sb+40)&0xFF); } else { e1(0x8D); e4(sb+40); }
     }
 
     cgen_block(func->body);

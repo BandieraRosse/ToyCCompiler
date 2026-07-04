@@ -31,9 +31,6 @@ static void mov_rax_imm64(long v) {
 
 /* ─── 加载/存储局部变量 [rbp+disp] ─── */
 /* 自动选择 disp8 或 disp32（用于大数组，如 elf_write 的 256KB static 缓冲） */
-static int disp8_fits(int offset) {
-    return offset >= -128 && offset <= 127;
-}
 
 static void lea_from_rbp(int offset) {
     e1(0x48); e1(0x8D);
@@ -42,28 +39,12 @@ static void lea_from_rbp(int offset) {
 }
 
 /* mov eax, [rbp+off] */
-static void load_eax_from_rbp(int off) {
-    if (disp8_fits(off)) { e1(0x8B); e1(0x45); e1(off & 0xFF); }
-    else { e1(0x8B); e1(0x85); e4(off); }
-}
 
 /* mov rax, [rbp+off] — 64-bit 加载 */
-static void load_rax_from_rbp(int off) {
-    if (disp8_fits(off)) { e1(0x48); e1(0x8B); e1(0x45); e1(off & 0xFF); }
-    else { e1(0x48); e1(0x8B); e1(0x85); e4(off); }
-}
 
 /* mov [rbp+off], eax — 32-bit 存储 */
-static void store_eax_to_rbp(int off) {
-    if (disp8_fits(off)) { e1(0x89); e1(0x45); e1(off & 0xFF); }
-    else { e1(0x89); e1(0x85); e4(off); }
-}
 
 /* mov [rbp+off], rax — 64-bit 存储 */
-static void store_rax_to_rbp(int off) {
-    if (disp8_fits(off)) { e1(0x48); e1(0x89); e1(0x45); e1(off & 0xFF); }
-    else { e1(0x48); e1(0x89); e1(0x85); e4(off); }
-}
 
 /* ─── SSE 浮点辅助（自举阶段可禁用，编译时加 -DTCC_FLOAT 开启） ─── */
 

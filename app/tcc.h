@@ -428,6 +428,54 @@ static inline void e1(int b) {
 }
 static inline void e4(int v) { e1(v); e1(v>>8); e1(v>>16); e1(v>>24); }
 
+/* ─── [rbp+off] 加载/存储（自动选择 disp8/disp32，修复大帧偏移截断 BUG） ─── */
+
+static inline int disp8_fits(int offset) {
+    return offset >= -128 && offset <= 127;
+}
+
+/* mov [rbp+off], r64 (REX.W + 0x89, reg = 源寄存器) */
+static inline void emit_store_rbp64(int reg, int off) {
+    e1(0x48);  e1(0x89);
+    if (disp8_fits(off)) { e1(0x45 | (reg << 3)); e1(off & 0xFF); }
+    else { e1(0x85 | (reg << 3)); e4(off); }
+}
+
+/* mov r64, [rbp+off] (REX.W + 0x8B) */
+static inline void emit_load_rbp64(int reg, int off) {
+    e1(0x48);  e1(0x8B);
+    if (disp8_fits(off)) { e1(0x45 | (reg << 3)); e1(off & 0xFF); }
+    else { e1(0x85 | (reg << 3)); e4(off); }
+}
+
+/* mov [rbp+off], r32 */
+static inline void emit_store_rbp32(int reg, int off) {
+    e1(0x89);
+    if (disp8_fits(off)) { e1(0x45 | (reg << 3)); e1(off & 0xFF); }
+    else { e1(0x85 | (reg << 3)); e4(off); }
+}
+
+/* mov r32, [rbp+off] */
+static inline void emit_load_rbp32(int reg, int off) {
+    e1(0x8B);
+    if (disp8_fits(off)) { e1(0x45 | (reg << 3)); e1(off & 0xFF); }
+    else { e1(0x85 | (reg << 3)); e4(off); }
+}
+
+/* 便捷函数 */
+static inline void load_rax_from_rbp(int off) { emit_load_rbp64(0, off); }
+static inline void store_rax_to_rbp(int off) { emit_store_rbp64(0, off); }
+static inline void load_eax_from_rbp(int off) { emit_load_rbp32(0, off); }
+static inline void store_eax_to_rbp(int off) { emit_store_rbp32(0, off); }
+
+/* 8-bit/16-bit 便捷函数 */
+static inline void emit_store_rbp16(int off) { e1(0x66); emit_store_rbp32(0, off); }
+static inline void emit_store_rbp8(int off) {
+    e1(0x88);
+    if (disp8_fits(off)) { e1(0x45); e1(off & 0xFF); }
+    else { e1(0x85); e4(off); }
+}
+
 static inline const char *arena_strdup(Arena *a, const char *start, int len) {
     char *p = arena_alloc(a, len + 1);
     int i;
