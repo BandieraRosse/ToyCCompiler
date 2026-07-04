@@ -425,6 +425,19 @@ static void cgen_for(AstNode *stmt) {
                                     { e1(0x48); e1(0x63); e1(0xC0); }
                             }
                             store_rax_to_rbp(locals[i].offset);
+                        } else if (locals[i].size == 1) {
+                            /* char: mov [rbp+off], al */
+                            if (disp8_fits(locals[i].offset))
+                                { e1(0x88); e1(0x45); e1(locals[i].offset & 0xFF); }
+                            else
+                                { e1(0x88); e1(0x85); e4(locals[i].offset); }
+                        } else if (locals[i].size == 2) {
+                            /* short: mov [rbp+off], ax */
+                            e1(0x66);
+                            if (disp8_fits(locals[i].offset))
+                                { e1(0x89); e1(0x45); e1(locals[i].offset & 0xFF); }
+                            else
+                                { e1(0x89); e1(0x85); e4(locals[i].offset); }
                         } else {
                             store_eax_to_rbp(locals[i].offset);
                         }
@@ -650,6 +663,19 @@ static void cgen_stmt(AstNode *stmt) {
                                     { e1(0x48); e1(0x63); e1(0xC0); }  /* movsxd rax, eax */
                             }
                             store_rax_to_rbp(locals[i].offset);
+                        } else if (locals[i].size == 1) {
+                            /* char: mov [rbp+off], al */
+                            if (disp8_fits(locals[i].offset))
+                                { e1(0x88); e1(0x45); e1(locals[i].offset & 0xFF); }
+                            else
+                                { e1(0x88); e1(0x85); e4(locals[i].offset); }
+                        } else if (locals[i].size == 2) {
+                            /* short: mov [rbp+off], ax */
+                            e1(0x66);
+                            if (disp8_fits(locals[i].offset))
+                                { e1(0x89); e1(0x45); e1(locals[i].offset & 0xFF); }
+                            else
+                                { e1(0x89); e1(0x85); e4(locals[i].offset); }
                         } else {
                             store_eax_to_rbp(locals[i].offset);
                         }

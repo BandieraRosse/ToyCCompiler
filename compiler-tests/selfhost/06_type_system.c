@@ -317,6 +317,40 @@ static void test_ptr_big_offset(void) {
 }
 
 // ============================================================
+// 测试 9: char 数组 + i++ 读写（验证 8/16-bit 存储不覆写相邻变量）
+// ============================================================
+
+static void test_char_arr_inc(void) {
+    test_start("char/short store width");
+
+    char buf[8];
+    int i = 0;
+
+    // 写入（走 ASSIGN 路径）
+    buf[i++] = 'A';
+    buf[i++] = 'B';
+    CHECK(buf[0] == 'A', "char arr write buf[0] via i++");
+    CHECK(buf[1] == 'B', "char arr write buf[1] via i++");
+    CHECK(i == 2, "char arr write i == 2");
+
+    // 读取（走 SUBSCRIPT + VAR_DECL 路径）
+    char a = buf[i++];  /* i=2, buf[2]=undefined but we just need the store not to corrupt */
+    CHECK(i == 3, "char a = buf[i++] keeps i correct");
+
+    // short 类型
+    short sarr[4];
+    int j = 0;
+    sarr[j++] = 100;
+    sarr[j++] = 200;
+    CHECK(sarr[0] == 100, "short arr write sarr[0] via j++");
+    CHECK(sarr[1] == 200, "short arr write sarr[1] via j++");
+    CHECK(j == 2, "short arr write j == 2");
+
+    short sa = sarr[j++];
+    CHECK(j == 3, "short sa = sarr[j++] keeps j correct");
+}
+
+// ============================================================
 // 主入口
 // ============================================================
 
@@ -331,6 +365,7 @@ static void run_tests(void) {
     test_func_arg_unsigned();
     test_type_sizes();
     test_ptr_big_offset();
+    test_char_arr_inc();
 
     print_str("\n");
     if (failures == 0) {
