@@ -218,6 +218,7 @@ static void emit_epilogue(void) {
 
 /* 全局变量的元素大小（供数组下标运算确定偏移量） */
 int global_elem_size[MAX_SYMS];
+int global_base_elem_size[MAX_SYMS];
 
 static int add_sym(const char *name, int offset, int size,
                    int is_global, int is_func) {
@@ -695,38 +696,44 @@ static void cgen_func_def(AstNode *func) {
                             }
                             float_reg++;
                         } else {
-                            int use64 = (locals[i].size == 8);
+                            int param_size = locals[i].size;
+                            int use64 = (param_size == 8);
                             if (int_reg < 6) {
-                                switch (int_reg) {
-                                case 0:
-                                    if (use64) { e1(0x48); e1(0x89); e1(0x7D); e1(locals[i].offset & 0xFF); }
-                                    else { e1(0x89); e1(0x7D); e1(locals[i].offset & 0xFF); }
-                                    break;
-                                case 1:
-                                    if (use64) { e1(0x48); e1(0x89); e1(0x75); e1(locals[i].offset & 0xFF); }
-                                    else { e1(0x89); e1(0x75); e1(locals[i].offset & 0xFF); }
-                                    break;
-                                case 2:
-                                    if (use64) { e1(0x48); e1(0x89); e1(0x55); e1(locals[i].offset & 0xFF); }
-                                    else { e1(0x89); e1(0x55); e1(locals[i].offset & 0xFF); }
-                                    break;
-                                case 3:
-                                    if (use64) { e1(0x48); e1(0x89); e1(0x4D); e1(locals[i].offset & 0xFF); }
-                                    else { e1(0x89); e1(0x4D); e1(locals[i].offset & 0xFF); }
-                                    break;
-                                case 4:
-                                    if (use64) { e1(0x4C); e1(0x89); e1(0x45); e1(locals[i].offset & 0xFF); }
-                                    else { e1(0x44); e1(0x89); e1(0x45); e1(locals[i].offset & 0xFF); }
-                                    break;
-                                case 5:
-                                    if (use64) { e1(0x4C); e1(0x89); e1(0x4D); e1(locals[i].offset & 0xFF); }
-                                    else { e1(0x44); e1(0x89); e1(0x4D); e1(locals[i].offset & 0xFF); }
-                                    break;
+                                /* 使用正确的数据宽度存储参数（防止 char/short 的 32-bit 存储覆写相邻变量） */
+                                if (param_size == 1) {
+                                    /* 8-bit store: mov [rbp+off], dil/sil/dl/cl/r8b/r9b */
+                                    switch (int_reg) {
+                                    case 0: e1(0x40); e1(0x88); e1(0x7D); break;
+                                    case 1: e1(0x40); e1(0x88); e1(0x75); break;
+                                    case 2: e1(0x88); e1(0x55); break;
+                                    case 3: e1(0x88); e1(0x4D); break;
+                                    case 4: e1(0x41); e1(0x88); e1(0x45); break;
+                                    case 5: e1(0x41); e1(0x88); e1(0x4D); break;
+                                    }
+                                    e1(locals[i].offset & 0xFF);
+                                } else {
+                                    if (param_size == 2) e1(0x66);  /* 16-bit prefix */
+                                    if (use64) e1(0x48);
+                                    switch (int_reg) {
+                                    case 0: e1(0x89); e1(0x7D); break;
+                                    case 1: e1(0x89); e1(0x75); break;
+                                    case 2: e1(0x89); e1(0x55); break;
+                                    case 3: e1(0x89); e1(0x4D); break;
+                                    case 4: e1(0x44); e1(0x89); e1(0x45); break;
+                                    case 5: e1(0x44); e1(0x89); e1(0x4D); break;
+                                    }
+                                    e1(locals[i].offset & 0xFF);
                                 }
                             } else {
                                 /* 7th+ 参数来自栈：[rbp + 0x10 + (int_reg-6)*8] */
                                 int sd = 0x10 + (int_reg - 6) * 8;
-                                if (use64) {
+                                if (param_size == 1) {
+                                    e1(0x0F); e1(0xB6); e1(0x45); e1(sd & 0xFF); /* movzx eax, byte [rbp+sd] */
+                                    e1(0x88); e1(0x45); e1(locals[i].offset & 0xFF); /* mov [rbp+off], al */
+                                } else if (param_size == 2) {
+                                    e1(0x0F); e1(0xB7); e1(0x45); e1(sd & 0xFF); /* movzx eax, word [rbp+sd] */
+                                    e1(0x66); e1(0x89); e1(0x45); e1(locals[i].offset & 0xFF); /* mov [rbp+off], ax */
+                                } else if (use64) {
                                     e1(0x48); e1(0x8B); e1(0x45); e1(sd & 0xFF);       /* mov rax, [rbp+sd] */
                                     e1(0x48); e1(0x89); e1(0x45); e1(locals[i].offset & 0xFF); /* mov [rbp+off], rax */
                                 } else {
@@ -785,8 +792,10 @@ void cgen_init(void) {
     strpool_size = 0;
     str_info_count = 0;
     elf_bss_size = 0;
-    for (int _i = 0; _i < MAX_SYMS; _i++)
+    for (int _i = 0; _i < MAX_SYMS; _i++) {
         global_elem_size[_i] = 0;
+        global_base_elem_size[_i] = 0;
+    }
 }
 
 void cgen_program(AstNode *prog) {
@@ -812,6 +821,7 @@ void cgen_program(AstNode *prog) {
                 s->shndx = 3;  /* .bss section */
                 s->sym_idx = -1;
                 global_elem_size[si] = (vsize > 8) ? node->elem_size : 0;
+                global_base_elem_size[si] = node->base_elem_size;
                 sym_count++;
             }
             bss_offset += vsize;

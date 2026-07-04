@@ -191,6 +191,7 @@ typedef struct AstNode {
     struct AstNode *stmts;
     /* AST_CALL */
     struct AstNode *args;
+    struct AstNode *call_target;  /* 函数调用目标表达式（函数指针表达式如 ops[0]） */
     /* AST_MEMBER: member_name = 成员名字 */
     const char *member_name;
     /* AST_STRING: str_val = 解码后的字符串内容 */
@@ -247,6 +248,7 @@ extern int strtab_len;
 
 /* 全局变量的元素大小（数组下标运算用） */
 extern int global_elem_size[MAX_SYMS];
+extern int global_base_elem_size[MAX_SYMS];
 
 /* 字符串字面量池 — cgen_expr 追加，cgen_program 结尾刷入 code_buf */
 extern unsigned char strpool_buf[STRPOOL_SIZE];

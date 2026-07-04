@@ -33,6 +33,9 @@ static const char *last_struct_tag = NULL;
 static Member last_struct_members[MAX_MEMBERS];
 static int last_struct_member_count = 0;
 
+/* parse_declarator 在处理 (*name[N])(params) 时捕获的数组维度（供外层声明使用） */
+static int pdecl_fptr_array_dim = 0;
+
 /* ─── 局部变量类型追踪（解析阶段用，供 .m 成员访问计算偏移） ─── */
 
 #define MAX_PVARS 4096
@@ -242,6 +245,7 @@ static AstNode *new_ast(Parser *p, AstKind kind) {
     n->dval = 0.0;
     n->op = 0;
     n->base_elem_size = 0;
+    n->call_target = NULL;
     return n;
 }
 
@@ -407,6 +411,7 @@ static AstNode *parse_postfix(Parser *p) {
             /* 函数调用 */
             AstNode *call = new_ast(p, AST_CALL);
             call->name = left->name;
+            call->call_target = left;
             call->args = NULL;
             consume(p);
             AstNode **tail = &call->args;
@@ -1310,14 +1315,19 @@ static const char *parse_declarator(Parser *p, int *ptr_level) {
         consume(p);
         if (peek(p).kind == TOK_STAR) {
             consume(p);
+            if (ptr_level) (*ptr_level)++;  /* (*name)(params) 是函数指针 → extra ptr level */
             while (peek(p).kind == TOK_CONST || peek(p).kind == TOK_VOLATILE ||
                    peek(p).kind == TOK_RESTRICT) consume(p);
             Token nt = peek(p);
             const char *name = "";
             if (nt.kind == TOK_IDENT) { consume(p); name = arena_strdup(p->arena, nt.start, nt.len); }
             /* 跳过数组后缀 [...]（函数指针数组）*/
+            pdecl_fptr_array_dim = 0;
             while (peek(p).kind == TOK_LBRACKET) {
-                int d = 1; consume(p);
+                consume(p);
+                if (pdecl_fptr_array_dim == 0 && peek(p).kind == TOK_NUMBER)
+                    pdecl_fptr_array_dim = peek(p).ival;
+                int d = 1;
                 while (d > 0 && peek(p).kind != TOK_EOF) {
                     if (peek(p).kind == TOK_LBRACKET) d++;
                     if (peek(p).kind == TOK_RBRACKET) d--;
@@ -1617,9 +1627,17 @@ AstNode *parse_compound_statement(Parser *p) {
                 AstNode *decl = new_ast(p, AST_VAR_DECL);
                 int dv_ptrs = 0;
                 decl->name = parse_declarator(p, &dv_ptrs);
-                decl->ival = dv_ptrs > 0 ? 8 : (ts > 0 ? ts : 4);
-                decl->type_size = decl->ival;
-                decl->elem_size = (dv_ptrs > 1) ? 8 : (dv_ptrs == 1 ? ts : 0);
+                /* 函数指针数组：(*name[N])(params) — parse_declarator 捕获了维度，这里乘入总大小 */
+                if (dv_ptrs > 0 && pdecl_fptr_array_dim > 0) {
+                    decl->ival = 8 * pdecl_fptr_array_dim;
+                    decl->type_size = 8;
+                    decl->elem_size = 8;
+                } else {
+                    decl->ival = dv_ptrs > 0 ? 8 : (ts > 0 ? ts : 4);
+                    decl->type_size = decl->ival;
+                    decl->elem_size = (dv_ptrs > 1) ? 8 : (dv_ptrs == 1 ? ts : 0);
+                }
+                pdecl_fptr_array_dim = 0;
                 /* 检查类型本身是否是指针 typedef（如 typedef char* string; string s;） */
                 if (dv_ptrs == 0 && ts > 0 && ptr_typedef_pts > 0) {
                     decl->elem_size = ptr_typedef_pts; }
