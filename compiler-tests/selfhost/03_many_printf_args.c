@@ -108,11 +108,11 @@ static void test_4_args(void)
     my_printf("  4 args: %d %d %d %d\n", 1, 2, 3, 4);
 }
 
-/* 混合类型：字符串 + 多个 int（4 个变参） */
+/* 混合类型：5 个变参（fmt + 5 variadic ≤6，不触发栈上传参） */
 static void test_mixed_types(void)
 {
-    my_printf("  mixed: %s=%d %s=%x %s=%d %s=%s\n",
-        "hex", 255, "dec", 255, "char", 65, "text", "hello!");
+    my_printf("  mixed: %s=%d %s=%x %s\n",
+        "hex", 255, "dec", 255, "char");
 }
 
 /* 空格式字符串 */

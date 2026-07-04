@@ -1575,13 +1575,34 @@ void cgen_expr(AstNode *node) {
             indirect_call = 1;
         }
 
-        /* 求值参数：float 用 push_xmm0，int 用 push_rax */
+        /* 求值参数：float 用 push_xmm0，int 用 push_rax
+         *
+         * 参数在栈上的布局决定了 pop 循环能否正确取出寄存器参数。
+         * 当 argc ≤ 6 时单次循环即可。当 argc > 6 时：
+         *
+         *   必须 先 push 栈参数（索引 6+，它们本该在栈上供被调者访问），
+         *   再 push 寄存器参数（索引 0-5，它们在栈顶方便 pop 到寄存器）。
+         *
+         * 错误示例（修复前）：先 push 0-5 再 push 6+，
+         *   栈参数在栈顶，pop 循环先拿到栈参数，寄存器参数全部错位 1 位。
+         */
         arg = node->args;
-        int ai;
-        for (ai = 0; ai < argc; ai++) {
-            if (!arg) break;
+        int idx;
+        /* Phase 1: push 栈参数（6+）先入栈 → 沉到栈底 */
+        for (idx = 0; arg && idx < 6; idx++) arg = arg->next;  /* 跳过 0-5 */
+        for (; arg && idx < argc; idx++) {
             cgen_expr(arg);
-            if (arg_is_float[ai])
+            if (arg_is_float[idx])
+                push_xmm0();
+            else
+                push_rax();
+            arg = arg->next;
+        }
+        /* Phase 2: push 寄存器参数（0-5）后入栈 → 在栈顶，pop 循环直接弹出 */
+        arg = node->args;
+        for (idx = 0; arg && idx < argc && idx < 6; idx++) {
+            cgen_expr(arg);
+            if (arg_is_float[idx])
                 push_xmm0();
             else
                 push_rax();
@@ -1598,7 +1619,7 @@ void cgen_expr(AstNode *node) {
           }
         }
 
-        for (ai = argc - 1; ai >= 0; ai--) {
+        for (int ai = argc - 1; ai >= 0; ai--) {
             /* 7th+ args stay on stack (x86_64 ABI) */
             if (ai >= 6) continue;
             if (arg_is_float[ai]) {
