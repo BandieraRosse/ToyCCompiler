@@ -137,6 +137,12 @@ clean:
 # 每个 compiler-tests/*.c 首行的 // EXPECT: N 指定预期退出码。
 # 流程：tcc 编译 → ld 链接 → 运行并检查退出码。
 
+RED := \033[31m
+GREEN := \033[32m
+YELLOW := \033[33m
+BLUE := \033[34m
+RESET := \033[0m
+
 TESTDIR := compiler-tests
 LDTESTFLAGS := -nostdlib -static -T ld.script
 
@@ -145,19 +151,21 @@ test: $(BUILD)/tcc $(BUILD)/tcc_rt.o $(BUILD)/tcc_rt_start.o
 	ids=$(filter-out $@,$(MAKECMDGOALS)); \
 	if [ -z "$$ids" ]; then files="$(TESTDIR)/*.c"; \
 	else files=; for n in $$ids; do files="$$files $(TESTDIR)/$${n}_*.c"; done; fi; \
+	printf "$(BLUE)=== tcc tests ===$(RESET)\n\n"; \
 	for f in $$files; do \
 		[ -f "$$f" ] || continue; \
 		total=$$((total+1)); \
 		name=$$(basename "$$f" .c); \
 		expect=$$(sed -n 's/.*EXPECT: *\([0-9]*\).*/\1/p' "$$f" | head -1); \
 		[ -z "$$expect" ] && expect=0; \
-		$(BUILD)/tcc "$$f" -o /tmp/$$name.o 2>/dev/null || { echo "  $$name: FAIL (compile)"; fail=$$((fail+1)); continue; }; \
-		$(LD) $(LDTESTFLAGS) /tmp/$$name.o $(BUILD)/tcc_rt.o $(BUILD)/tcc_rt_start.o -o /tmp/$$name 2>/dev/null || { echo "  $$name: FAIL (link)"; fail=$$((fail+1)); continue; }; \
+		$(BUILD)/tcc "$$f" -o /tmp/$$name.o 2>/dev/null || { printf "  $(RED)FAIL$(RESET) %s (compile)\n" "$$name"; fail=$$((fail+1)); continue; }; \
+		$(LD) $(LDTESTFLAGS) /tmp/$$name.o $(BUILD)/tcc_rt.o $(BUILD)/tcc_rt_start.o -o /tmp/$$name 2>/dev/null || { printf "  $(RED)FAIL$(RESET) %s (link)\n" "$$name"; fail=$$((fail+1)); continue; }; \
 		/tmp/$$name >/dev/null 2>&1; got=$$?; \
-		if [ "$$got" = "$$expect" ]; then echo "  $$name: ok"; ok=$$((ok+1)); \
-		else echo "  $$name: FAIL (want $$expect got $$got)"; fail=$$((fail+1)); fi; \
+		if [ "$$got" = "$$expect" ]; then printf "  $(GREEN)ok$(RESET)   %s (%d)\n" "$$name" "$$got"; ok=$$((ok+1)); \
+		else printf "  $(RED)FAIL$(RESET) %s (want %d got %d)\n" "$$name" "$$expect" "$$got"; fail=$$((fail+1)); fi; \
 	done; \
-	echo "--- $$ok/$$total passed, $$fail failed"; [ "$$fail" -eq 0 ]
+	printf "\n$(BLUE)=== $(GREEN)%d passed$(RESET), $(RED)%d failed$(RESET), %d total ===$(RESET)\n" "$$ok" "$$fail" "$$total"; \
+	[ "$$fail" -eq 0 ]
 
 # ─── 依赖文件包含（-MD 自动生成的 .d 实现增量头文件跟踪） ──
 
