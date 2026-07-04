@@ -67,11 +67,11 @@ int elf_write_object(const char *path) {
 
     /* ── 计算文件偏移 ── */
     int shdr_ofs = 64;
-    int text_ofs = (shdr_ofs + num_sections * 64 + 15) & ~15;
+    int text_ofs = (shdr_ofs + num_sections * 64 + 15) & -16;
     int text_sz  = elf_code_size;
-    int rela_ofs = (text_ofs + text_sz + 7) & ~7;
+    int rela_ofs = (text_ofs + text_sz + 7) & -8;
     int rela_sz  = elf_rel_count * 24;
-    int sym_ofs  = (rela_ofs + rela_sz + 7) & ~7;
+    int sym_ofs  = (rela_ofs + rela_sz + 7) & -8;
     int sym_sz   = (elf_sym_count + 1) * 24;
     int str_ofs  = sym_ofs + sym_sz;
     int shstr_ofs = str_ofs + strtab_sz;

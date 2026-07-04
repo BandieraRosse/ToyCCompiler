@@ -23,7 +23,7 @@ static void push_rcx(void) { e1(0x51); }  /* push rcx */
 /* ─── 加载常量到 eax ─── */
 
 static void mov_eax_imm(int v) { e1(0xB8); e4(v); }
-static void mov_rax_imm64(long long v) {
+static void mov_rax_imm64(long v) {
     e1(0x48); e1(0xB8);
     e1(v & 0xFF); e1((v>>8) & 0xFF); e1((v>>16) & 0xFF); e1((v>>24) & 0xFF);
     e1((v>>32) & 0xFF); e1((v>>40) & 0xFF); e1((v>>48) & 0xFF); e1((v>>56) & 0xFF);
@@ -50,73 +50,79 @@ static void store_rax_to_rbp(int disp8) {
     e1(0x48); e1(0x89); e1(0x45); e1(disp8 & 0xFF);
 }
 
-/* ─── SSE 浮点辅助 ─── */
+/* ─── SSE 浮点辅助（自举阶段可禁用，编译时加 -DTCC_FLOAT 开启） ─── */
 
-/* 将 double 立即数加载到 xmm0: mov rax, imm64; movq xmm0, rax */
+#ifdef TCC_FLOAT
+
 static void load_double_imm(double d) {
-    union { double d; unsigned long long u; } u;
+    union { double d; unsigned long u; } u;
     u.d = d;
-    unsigned long long v = u.u;
-    e1(0x48); e1(0xB8);           /* mov rax, imm64 */
+    unsigned long v = u.u;
+    e1(0x48); e1(0xB8);
     e1(v & 0xFF); e1((v >> 8) & 0xFF);
     e1((v >> 16) & 0xFF); e1((v >> 24) & 0xFF);
     e1((v >> 32) & 0xFF); e1((v >> 40) & 0xFF);
     e1((v >> 48) & 0xFF); e1((v >> 56) & 0xFF);
-    e1(0x66); e1(0x48); e1(0x0F); e1(0x6E); e1(0xC0);  /* movq xmm0, rax */
+    e1(0x66); e1(0x48); e1(0x0F); e1(0x6E); e1(0xC0);
 }
 
-/* movsd xmm0, [rbp+disp8] — 从局部变量加载 double */
 static void load_double_from_rbp(int disp8) {
     e1(0xF2); e1(0x0F); e1(0x10); e1(0x45); e1(disp8 & 0xFF);
 }
 
-/* movsd [rbp+disp8], xmm0 — 存储 double 到局部变量 */
 static void store_double_to_rbp(int disp8) {
     e1(0xF2); e1(0x0F); e1(0x11); e1(0x45); e1(disp8 & 0xFF);
 }
 
-/* 将 xmm0（double）保存到栈顶：sub rsp,8; movsd [rsp],xmm0 */
 static void push_xmm0(void) {
-    e1(0x48); e1(0x83); e1(0xEC); e1(0x08);     /* sub rsp, 8 */
-    e1(0xF2); e1(0x0F); e1(0x11); e1(0x04); e1(0x24);  /* movsd [rsp], xmm0 */
+    e1(0x48); e1(0x83); e1(0xEC); e1(0x08);
+    e1(0xF2); e1(0x0F); e1(0x11); e1(0x04); e1(0x24);
 }
 
-/* 从栈顶恢复到 xmm1：movsd xmm1,[rsp]; add rsp,8 */
 static void pop_xmm1(void) {
-    e1(0xF2); e1(0x0F); e1(0x10); e1(0x0C); e1(0x24);  /* movsd xmm1, [rsp] */
-    e1(0x48); e1(0x83); e1(0xC4); e1(0x08);     /* add rsp, 8 */
+    e1(0xF2); e1(0x0F); e1(0x10); e1(0x0C); e1(0x24);
+    e1(0x48); e1(0x83); e1(0xC4); e1(0x08);
 }
 
-/* 从栈顶恢复到 xmm0：movsd xmm0,[rsp]; add rsp,8 */
 static void pop_xmm0(void) {
-    e1(0xF2); e1(0x0F); e1(0x10); e1(0x04); e1(0x24);  /* movsd xmm0, [rsp] */
-    e1(0x48); e1(0x83); e1(0xC4); e1(0x08);     /* add rsp, 8 */
+    e1(0xF2); e1(0x0F); e1(0x10); e1(0x04); e1(0x24);
+    e1(0x48); e1(0x83); e1(0xC4); e1(0x08);
 }
 
-/* int→double: cvtsi2sd xmm0, eax */
 static void cvti2d(void) {
     e1(0xF2); e1(0x0F); e1(0x2A); e1(0xC0);
 }
 
-/* movapd xmm1, xmm0 — 保存 xmm0 */
 static void save_xmm0_to_xmm1(void) {
     e1(0x66); e1(0x0F); e1(0x28); e1(0xC8);
 }
 
-/* movapd xmm0, xmm1 — 恢复 xmm1 到 xmm0 */
 static void restore_xmm1_to_xmm0(void) {
     e1(0x66); e1(0x0F); e1(0x28); e1(0xC1);
 }
 
-/* 双精度取负：翻转符号位 (xorpd xmm0, sign_mask) */
 static void negate_double(void) {
-    /* mov rax, 0x8000000000000000; movq xmm1, rax; xorpd xmm0, xmm1 */
     e1(0x48); e1(0xB8);
     e1(0x00); e1(0x00); e1(0x00); e1(0x00);
-    e1(0x00); e1(0x00); e1(0x00); e1(0x80);  /* 0x8000000000000000 LE */
-    e1(0x66); e1(0x48); e1(0x0F); e1(0x6E); e1(0xC8);  /* movq xmm1, rax */
-    e1(0x66); e1(0x0F); e1(0x57); e1(0xC1);            /* xorpd xmm0, xmm1 */
+    e1(0x00); e1(0x00); e1(0x00); e1(0x80);
+    e1(0x66); e1(0x48); e1(0x0F); e1(0x6E); e1(0xC8);
+    e1(0x66); e1(0x0F); e1(0x57); e1(0xC1);
 }
+
+#else
+
+static void load_double_imm(double d) { (void)d; }
+static void load_double_from_rbp(int d) { (void)d; }
+static void store_double_to_rbp(int d) { (void)d; }
+static void push_xmm0(void) {}
+static void pop_xmm1(void) {}
+static void pop_xmm0(void) {}
+static void cvti2d(void) {}
+static void save_xmm0_to_xmm1(void) {}
+static void restore_xmm1_to_xmm0(void) {}
+static void negate_double(void) {}
+
+#endif
 
 /* ─── 二元运算（ecx/rcx OP eax/rax → eax/rax） ─── */
 /* 32-bit 版本 */
@@ -368,7 +374,7 @@ void cgen_expr(AstNode *node) {
         if (node->is_float)
             load_double_imm(node->dval);
         else
-            if (node->ival >= -2147483648LL && node->ival <= 2147483647LL) mov_eax_imm((int)node->ival); else mov_rax_imm64(node->ival);
+            if (node->ival >= -2147483648L && node->ival <= 2147483647L) mov_eax_imm((int)node->ival); else mov_rax_imm64(node->ival);
         break;
 
     case AST_STRING: {

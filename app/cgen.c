@@ -199,7 +199,7 @@ static void emit_prologue(void) {
 
     if (frame_size > 0) {
         /* sub rsp, frame_size (对齐到 16) */
-        int aligned = (frame_size + 15) & ~15;
+        int aligned = (frame_size + 15) & -16;
         if (aligned <= 127) {
             emit1(0x48); emit1(0x83); emit1(0xEC); emit1(aligned);
         } else {
@@ -796,7 +796,7 @@ void cgen_program(AstNode *prog) {
         if (node->kind == AST_VAR_DECL) {
             int vsize = node->ival > 0 ? node->ival : 4;
             /* 对齐到 8 字节 */
-            bss_offset = (bss_offset + 7) & ~7;
+            bss_offset = (bss_offset + 7) & -8;
             if (sym_count < MAX_SYMS) {
                 int si = sym_count;
                 CgenSym *s = &syms[si];

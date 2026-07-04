@@ -243,7 +243,7 @@ typedef struct {
     int reg;          /* 寄存器编号+大小 */
     int reg2;         /* SIB index 寄存器 */
     int scale;        /* SIB scale */
-    long long imm;    /* 立即数/偏移 */
+    long imm;    /* 立即数/偏移 */
     const char *label;/* 标号名 (call label) */
 } Operand;
 
@@ -287,7 +287,7 @@ static int parse_operand(const char *line, Operand *op, const char **endp) {
     /* 数字后紧跟 ( 表示内存引用: disp(%reg) */
     if ((*t >= '0' && *t <= '9') || *t == '-') {
         /* 解析数字 */
-        long long val = 0;
+        long val = 0;
         const char *ns = t;
         int neg = 0;
         if (*ns == '-') { neg = 1; ns++; }
@@ -389,7 +389,7 @@ static int parse_operand(const char *line, Operand *op, const char **endp) {
         const char *ns = t + 1;
         int neg = 0;
         if (*ns == '-') { neg = 1; ns++; }
-        long long val = 0;
+        long val = 0;
         if (ns[0] == '0' && (ns[1] == 'x' || ns[1] == 'X')) {
             ns += 2;
             while (*ns >= '0' && *ns <= '9')
@@ -415,7 +415,7 @@ static int parse_operand(const char *line, Operand *op, const char **endp) {
         const char *p = line;
         while (p < t && (*p == ' ' || *p == '\t')) p++;
         int has_disp = 0;
-        long long disp = 0;
+        long disp = 0;
         if (p < t) {
             /* 有偏移 */
             has_disp = 1;
@@ -501,7 +501,7 @@ static int parse_operand(const char *line, Operand *op, const char **endp) {
     }
 
     if ((*t >= '0' && *t <= '9') || *t == '-') {
-        long long val = 0;
+        long val = 0;
         const char *ns = t;
         int neg = 0;
         if (*ns == '-') { neg = 1; ns++; }
@@ -567,7 +567,7 @@ static int encode_instr(const InstrDef *def, Operand *op0, Operand *op1,
             emit_rex_rm(1, ext, r1);
             e1(def->opcode[0]);
             e1(make_modrm(3, ext, r1));
-            long long v = op0 ? op0->imm : 0;
+            long v = op0 ? op0->imm : 0;
             /* and/sub 使用 ib (sign-extended imm8) */
             if (def->opcode[0] == 0x83) {
                 e1(v & 0xFF);
