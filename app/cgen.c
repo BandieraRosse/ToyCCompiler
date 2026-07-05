@@ -488,7 +488,7 @@ static void cgen_block(AstNode *block) {
 
 #define MAX_CASES 256
 
-typedef struct { int value; int label; } CaseEntry;
+typedef struct { int value; int value2; int label; } CaseEntry;
 
 static void cgen_switch(AstNode *stmt) {
     CaseEntry cases[MAX_CASES];
@@ -500,6 +500,8 @@ static void cgen_switch(AstNode *stmt) {
         if (s->kind == AST_CASE) {
             if (case_count >= MAX_CASES) break;
             cases[case_count].value = s->ival;
+            cases[case_count].value2 = (s->right && s->right->kind == AST_CONSTANT)
+                                       ? s->right->ival : s->ival;
             cases[case_count].label = new_label();
             s->op = cases[case_count].label;  /* 存入 op 字段供 Phase 4 使用 */
             case_count++;
@@ -537,9 +539,22 @@ static void cgen_switch(AstNode *stmt) {
 
     int i;
     for (i = 0; i < case_count; i++) {
-        emit1(0x3D);                /* cmp eax, imm32 */
-        emit4(cases[i].value);
-        emit_jcc(0x84, cases[i].label);  /* je case_label */
+        if (cases[i].value2 != cases[i].value) {
+            /* case lo ... hi：范围匹配 */
+            int skip_lbl = new_label();
+            emit1(0x3D);                /* cmp eax, imm32 */
+            emit4(cases[i].value);
+            emit_jcc(0x8C, skip_lbl);   /* jl skip (eax < lo) */
+            emit1(0x3D);                /* cmp eax, imm32 */
+            emit4(cases[i].value2);
+            emit_jcc(0x8F, skip_lbl);   /* jg skip (eax > hi) */
+            emit_jmp(cases[i].label);   /* lo <= eax <= hi → jmp case_body */
+            set_label(skip_lbl);        /* skip: 继续下一个 case */
+        } else {
+            emit1(0x3D);                /* cmp eax, imm32 */
+            emit4(cases[i].value);
+            emit_jcc(0x84, cases[i].label);  /* je case_label */
+        }
     }
 
     /* 未匹配时跳到 default 或结束 */

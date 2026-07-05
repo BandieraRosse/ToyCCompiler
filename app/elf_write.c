@@ -255,8 +255,8 @@ int elf_write_object(const char *path) {
     b[shdr_start+256]=23; b[shdr_start+260]=2;
     { int off = shdr_start + 256;
       SHDR_W4(off+24, sym_ofs); SHDR_W4(off+32, sym_sz);
-      b[off+40]=5;    /* sh_link = .strtab (5) */
-      b[off+44]=first_global;
+      SHDR_W4(off+40, 5); /* sh_link = .strtab (5) */
+      SHDR_W4(off+44, first_global);
       b[off+48]=8; b[off+56]=24; }
 
     /* 节区 5: .strtab (sh_name=31) */

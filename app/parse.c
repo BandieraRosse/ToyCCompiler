@@ -1681,7 +1681,7 @@ AstNode *parse_compound_statement(Parser *p) {
                 /* 指针类型的变量本身无符号性，但元素可能有 */
                 if (dv_ptrs == 0) {
                     decl->is_unsigned = last_type_is_unsigned;
-                    decl->elem_is_unsigned = 0;
+                    decl->elem_is_unsigned = last_type_is_unsigned;
                 } else {
                     decl->is_unsigned = 0;
                     decl->elem_is_unsigned = last_type_is_unsigned;
@@ -1783,7 +1783,7 @@ AstNode *parse_compound_statement(Parser *p) {
                                 AstNode *assign = new_ast(p, AST_ASSIGN);
                                 assign->left = sub;
                                 assign->right = ie;
-                                assign->type_size = 4;
+                                assign->type_size = (ts > 0 ? ts : 4);
                                 if (prev_init) prev_init->next = assign;
                                 else decl->expr = assign;
                                 prev_init = assign;
@@ -1792,6 +1792,21 @@ AstNode *parse_compound_statement(Parser *p) {
                             if (peek(p).kind == TOK_COMMA) consume(p);
                         }
                         if (peek(p).kind == TOK_RBRACE) consume(p);
+                        /* 根据初始化元素修正数组大小（int arr[] = {1,2,3} → 3 元素） */
+                        if (dim_count == 0 && init_idx > 0) {
+                            int elem_ts = (dv_ptrs > 0) ? 8 : (ts > 0 ? ts : 4);
+                            decl->ival = init_idx * elem_ts;
+                            decl->type_size = decl->ival;
+                            decl->elem_size = elem_ts;
+                            decl->base_elem_size = elem_ts;
+                            /* 更新局部变量表的大小 */
+                            if (decl->name && *decl->name) {
+                                int pi;
+                                for (pi = 0; pi < pvar_count; pi++)
+                                    if (strcmp(pvar_name[pi], decl->name) == 0)
+                                        { pvar_size_arr[pi] = decl->ival; break; }
+                            }
+                        }
                     } else {
                         decl->expr = parse_expr(p);
                         /* char buf[] = "str" — 用字符串长度修正数组类型大小 */
@@ -1926,6 +1941,14 @@ static AstNode *parse_statement(Parser *p) {
         { AstNode *n = new_ast(p, AST_CASE);
           AstNode *val = parse_expr(p);
           n->ival = (val && val->kind == AST_CONSTANT) ? val->ival : 0;
+          n->right = NULL;  /* default: no range */
+          if (peek(p).kind == TOK_ELLIPSIS) {
+              consume(p);  /* ... */
+              AstNode *val2 = parse_expr(p);
+              AstNode *rnode = new_ast(p, AST_CONSTANT);
+              rnode->ival = (val2 && val2->kind == AST_CONSTANT) ? val2->ival : 0;
+              n->right = rnode;
+          }
           expect(p, TOK_COLON); return n; }
     case TOK_DEFAULT:
         consume(p);
@@ -2176,6 +2199,11 @@ AstNode *parse_program(Parser *p) {
                 } else { consume(p); }
             }
             int tsz = parse_type_specifier(p);
+            /* 匿名 typedef（如 typedef enum { ... };）— 无 declarator */
+            if (peek(p).kind == TOK_SEMI) {
+                expect(p, TOK_SEMI);
+                continue;
+            }
             int tptr_level = 0;
             const char *tname = parse_declarator(p, &tptr_level);
             if (tname && *tname && typedef_count < MAX_TYPEDEFS) {
@@ -2421,8 +2449,18 @@ AstNode *parse_program(Parser *p) {
                         if (peek(p).kind == TOK_NUMBER) {
                             gv_arr_len *= peek(p).ival;
                             consume(p);
+                        } else if (peek(p).kind == TOK_RBRACKET) {
+                            /* 空维度 char buf[] — 无操作 */
+                        } else {
+                            /* 表达式维度 char buf[4*1024] 或 buf[MAX] — 跳过到匹配的 ] */
+                            int d = 1;
+                            while (d > 0 && peek(p).kind != TOK_EOF) {
+                                if (peek(p).kind == TOK_LBRACKET) d++;
+                                if (peek(p).kind == TOK_RBRACKET) d--;
+                                if (d) consume(p);
+                            }
                         }
-                        expect(p, TOK_RBRACKET);
+                        if (peek(p).kind == TOK_RBRACKET) consume(p);
                     }
                     /* 计算总大小 */
                     int gv_unit = gv_ptrs > 0 ? 8 : (typesize > 0 ? typesize : 4);

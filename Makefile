@@ -176,23 +176,46 @@ test: $(BUILD)/tcc $(BUILD)/tcc_rt.o $(BUILD)/tcc_rt_start.o
 %:
 	@:
 
-# ─── 源文件独立测试（source）：gcc 编译，验证单个源文件逻辑 ──
+# ─── 源文件独立测试（source）：验证单个源文件逻辑 ──
+#
+# 默认用 gcc 编译，也可用项目自身的 build/tcc：
+#   make test-source                  # gcc 编译
+#   make test-source SCTEST_USE_TCC=1 # build/tcc + ld 编译
 
 SOURCETESTDIR := compiler-tests/source
 
-SCTEST_CC   ?= gcc
-SCTEST_CFLAGS ?= -nostdlib -ffreestanding -Wall -Wextra -O0
+SCTEST_CC       ?= gcc
+SCTEST_CFLAGS   ?= -nostdlib -ffreestanding -Wall -Wextra -O0
 
+# 使用 build/tcc 时的链接 flags（测试文件自包含，无需 tcc_rt.o）
+SCTEST_LDFLAGS  := -nostdlib -static -T ld.script
+
+# 根据 SCTEST_USE_TCC 选择依赖
+ifeq ($(SCTEST_USE_TCC),)
 test-source: $(SOURCETESTDIR)/lex.c
+else
+test-source: $(BUILD)/tcc
+endif
 	@ok=0; fail=0; \
 	for f in $(SOURCETESTDIR)/*.c; do \
 		name=$$(basename "$$f" .c); \
 		expect=$$(sed -n 's/.*EXPECT: *\([0-9]*\).*/\1/p' "$$f" | head -1); \
 		[ -z "$$expect" ] && expect=0; \
 		printf "  $(BLUE)source:$$name$(RESET) ... "; \
-		$(SCTEST_CC) $(SCTEST_CFLAGS) -Wl,-e,__tlibc_start "$$f" -o /tmp/test_$$name 2>/dev/null; \
-		if [ $$? -ne 0 ]; then \
-			printf "$(RED)COMPILE FAIL$(RESET)\n"; fail=$$((fail+1)); continue; \
+		if [ -n "$(SCTEST_USE_TCC)" ]; then \
+			$(BUILD)/tcc "$$f" -o /tmp/$$name.o 2>/dev/null; \
+			if [ $$? -ne 0 ]; then \
+				printf "$(RED)COMPILE FAIL$(RESET)\n"; fail=$$((fail+1)); continue; \
+			fi; \
+			$(LD) $(SCTEST_LDFLAGS) /tmp/$$name.o -o /tmp/test_$$name 2>/dev/null; \
+			if [ $$? -ne 0 ]; then \
+				printf "$(RED)LINK FAIL$(RESET)\n"; fail=$$((fail+1)); continue; \
+			fi; \
+		else \
+			$(SCTEST_CC) $(SCTEST_CFLAGS) -Wl,-e,__tlibc_start "$$f" -o /tmp/test_$$name 2>/dev/null; \
+			if [ $$? -ne 0 ]; then \
+				printf "$(RED)COMPILE FAIL$(RESET)\n"; fail=$$((fail+1)); continue; \
+			fi; \
 		fi; \
 		/tmp/test_$$name > /tmp/test_$$name.log 2>&1; got=$$?; \
 		if [ "$$got" = "$$expect" ]; then \
@@ -203,6 +226,8 @@ test-source: $(SOURCETESTDIR)/lex.c
 	done; \
 	printf "  -> %d passed, %d failed\n" "$$ok" "$$fail"; \
 	[ "$$fail" -eq 0 ]
+
+
 
 # ─── 自举测试（selfhost）：tcc 独自编译，不依赖 tcc_rt.o / tcc_rt_start.o ──
 
