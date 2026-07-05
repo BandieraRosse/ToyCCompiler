@@ -1716,18 +1716,26 @@ AstNode *parse_compound_statement(Parser *p) {
                 while (peek(p).kind == TOK_LBRACKET) {
                     bracket_count++;
                     consume(p);
-                    if (peek(p).kind == TOK_NUMBER && peek(p).ival > 0) {
-                        if (dim_count == 0) first_dim = peek(p).ival;
-                        decl->ival *= peek(p).ival;
-                        consume(p);
-                        dim_count++;
-                    }
-                    /* 跳过到匹配的 ]（处理表达式维数如 4*1024 或 MAX*1024） */
-                    int d = 1;
-                    while (d > 0 && peek(p).kind != TOK_EOF) {
-                        if (peek(p).kind == TOK_LBRACKET) d++;
-                        if (peek(p).kind == TOK_RBRACKET) d--;
-                        if (d) consume(p);
+                    if (peek(p).kind == TOK_RBRACKET) {
+                        /* 空维度 int arr[] — 无操作 */
+                    } else {
+                        /* 维度表达式：int arr[4], int arr[4*1024], int arr[(4)] */
+                        AstNode *dim_expr = parse_expr(p);
+                        if (dim_expr) {
+                            long long dim_val = eval_const_expr(dim_expr);
+                            if (dim_val > 0) {
+                                if (dim_count == 0) first_dim = (int)dim_val;
+                                decl->ival *= (int)dim_val;
+                                dim_count++;
+                            }
+                        }
+                        /* 跳过到匹配的 ] */
+                        int d = 1;
+                        while (d > 0 && peek(p).kind != TOK_EOF) {
+                            if (peek(p).kind == TOK_LBRACKET) d++;
+                            if (peek(p).kind == TOK_RBRACKET) d--;
+                            if (d) consume(p);
+                        }
                     }
                     if (peek(p).kind == TOK_RBRACKET) consume(p);
                 }
@@ -2446,13 +2454,17 @@ AstNode *parse_program(Parser *p) {
                     while (peek(p).kind == TOK_LBRACKET) {
                         gv_bracket_count++;
                         consume(p);
-                        if (peek(p).kind == TOK_NUMBER) {
-                            gv_arr_len *= peek(p).ival;
-                            consume(p);
-                        } else if (peek(p).kind == TOK_RBRACKET) {
+                        if (peek(p).kind == TOK_RBRACKET) {
                             /* 空维度 char buf[] — 无操作 */
                         } else {
-                            /* 表达式维度 char buf[4*1024] 或 buf[MAX] — 跳过到匹配的 ] */
+                            /* 维度表达式：char buf[4], buf[4*1024], buf[(4)] */
+                            AstNode *dim_expr = parse_expr(p);
+                            if (dim_expr) {
+                                long long dim_val = eval_const_expr(dim_expr);
+                                if (dim_val > 0)
+                                    gv_arr_len *= (int)dim_val;
+                            }
+                            /* 跳过到匹配的 ] */
                             int d = 1;
                             while (d > 0 && peek(p).kind != TOK_EOF) {
                                 if (peek(p).kind == TOK_LBRACKET) d++;
