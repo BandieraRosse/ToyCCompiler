@@ -1531,16 +1531,39 @@ void cgen_expr(AstNode *node) {
 
                 cgen_expr(node->args);              /* rax = &ap */
                 e1(0x48); e1(0x89); e1(0xC7);       /* mov rdi, rax — 保存 &ap */
-                e1(0x48); e1(0x8B); e1(0x47); e1(0x10); /* mov rax, [rdi+0x10] — reg_save_area（64 位指针） */
                 e1(0x8B); e1(0x0F);                 /* mov ecx, [rdi] — gp_offset */
-                /* 从 reg_save_area[gp_offset] 读值 */
+                /* 检查 gp_offset >= 48（寄存器保存区 6×8 字节），是则走栈参数 */
+                e1(0x83); e1(0xF9); e1(0x30);       /* cmp ecx, 48 */
+                int _jge_pos = code_size;
+                e1(0x7D);                           /* jge rel8 → overflow */
+                int _jge_ofs = code_size;
+                e1(0);                              /* placeholder offset */
+
+                /* --- 寄存器路径（gp_offset < 48）--- */
+                e1(0x48); e1(0x8B); e1(0x47); e1(0x10); /* mov rax, [rdi+0x10] — reg_save_area */
                 if (type_size >= 8) {
                     e1(0x48); e1(0x8B); e1(0x04); e1(0x08); /* mov rax, [rax+rcx]（64 位） */
                 } else {
                     e1(0x8B); e1(0x04); e1(0x08);            /* mov eax, [rax+rcx]（32 位） */
                 }
-                /* 更新 gp_offset：每寄存器占 8 字节（x86-64 ABI），不论类型大小 */
-                e1(0x83); e1(0x07); e1(8);  /* add dword [rdi], 8 */
+                e1(0x83); e1(0x07); e1(8);          /* add dword [rdi], 8 — gp_offset += 8 */
+                int _jmp_pos = code_size;
+                e1(0xEB);                           /* jmp rel8 → done */
+                int _jmp_ofs = code_size;
+                e1(0);                              /* placeholder offset */
+
+                /* --- Overflow 路径（gp_offset >= 48）--- */
+                code_buf[_jge_ofs] = code_size - _jge_ofs - 1;
+                e1(0x48); e1(0x8B); e1(0x47); e1(0x08); /* mov rax, [rdi+0x08] — overflow_arg_area */
+                if (type_size >= 8) {
+                    e1(0x48); e1(0x8B); e1(0x00);        /* mov rax, [rax]（64 位） */
+                } else {
+                    e1(0x8B); e1(0x00);                   /* mov eax, [rax]（32 位） */
+                }
+                /* overflow_arg_area += 8（栈槽一直是 8 字节） */
+                e1(0x48); e1(0x83); e1(0x47); e1(0x08); e1(0x08);
+
+                code_buf[_jmp_ofs] = code_size - _jmp_ofs - 1;
                 break;
             }
             if (strcmp(node->name, "__builtin_va_end") == 0) {
