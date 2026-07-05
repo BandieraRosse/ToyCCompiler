@@ -56,6 +56,13 @@ int func_nparams;      /* 当前函数的命名参数个数（供 va_start 使�
 /* ─── 作用域深度（用于变量阴影解析） ─── */
 int scope_depth;
 
+/* ─── 函数返回类型表（供 struct 按值返回使用） ─── */
+const char *func_ret_names[MAX_FUNC_RET_TYPES];
+int func_ret_sizes[MAX_FUNC_RET_TYPES];
+int func_ret_count;
+static int current_func_ret_size;
+static int current_hidden_ptr_offset;  /* hidden pointer 栈槽的 RBP 偏移 */
+
 /* ─── 标签和回填 ─── */
 
 #define MAX_LABELS 1024
@@ -327,7 +334,36 @@ static void collect_locals(AstNode *node) {
 /* ─── 语句代码生成 ─── */
 
 static void cgen_return(AstNode *stmt) {
-    if (stmt->expr) cgen_expr(stmt->expr);
+    if (stmt->expr) {
+        cgen_expr(stmt->expr);
+        if (current_func_ret_size > 16) {
+            /* 大结构体按值返回（hidden pointer ABI）
+             *
+             * x86-64 SysV: >16 字节的 struct 通过隐式第 0 个参数（RDI）
+             * 传递隐藏指针。被调方通过该指针写入结构体数据，并将指针放入 RAX。
+             *
+             * RAX = 源地址（cgen_expr 对 >8 字节 struct 变量做 lea 得到）
+             * 隐藏指针已在函数入口处保存到栈槽 current_hidden_ptr_offset
+             *
+             * mov rsi, rax                 ; 源地址
+             * mov rdi, [rbp+hoff]          ; 目标地址（隐藏指针）
+             * mov ecx, total_size          ; 字节数
+             * rep movsb                    ; memcpy
+             * mov rax, [rbp+hoff]          ; 返回指针
+             */
+            e1(0x48); e1(0x89); e1(0xC6);  /* mov rsi, rax */
+            if (disp8_fits(current_hidden_ptr_offset))
+                { e1(0x48); e1(0x8B); e1(0x7D); e1(current_hidden_ptr_offset & 0xFF); }
+            else
+                { e1(0x48); e1(0x8B); e1(0xBD); e4(current_hidden_ptr_offset); }
+            e1(0xB9); e4(current_func_ret_size);  /* mov ecx, size */
+            e1(0xF3); e1(0xA4);                   /* rep movsb */
+            if (disp8_fits(current_hidden_ptr_offset))
+                { e1(0x48); e1(0x8B); e1(0x45); e1(current_hidden_ptr_offset & 0xFF); }
+            else
+                { e1(0x48); e1(0x8B); e1(0x85); e4(current_hidden_ptr_offset); }
+        }
+    }
     emit_epilogue();
 }
 
@@ -410,6 +446,15 @@ static void cgen_for(AstNode *stmt) {
                         if (locals[i].is_float) {
                             emit1(0xF2); emit1(0x0F); emit1(0x11);
                             emit1(0x45); emit1(locals[i].offset & 0xFF);
+                        } else if (locals[i].size > 8) {
+                            /* 大结构体赋值 */
+                            e1(0x48); e1(0x89); e1(0xC6);  /* mov rsi, rax */
+                            if (disp8_fits(locals[i].offset))
+                                { e1(0x48); e1(0x8D); e1(0x7D); e1(locals[i].offset & 0xFF); }
+                            else
+                                { e1(0x48); e1(0x8D); e1(0xBD); e4(locals[i].offset); }
+                            e1(0xB9); e4(locals[i].size);  /* mov ecx, size */
+                            e1(0xF3); e1(0xA4);            /* rep movsb */
                         } else if (locals[i].size == 8) {
                             /* int→long：来源于 4 字节表达式时需符号扩展 */
                             if (stmt->loop_init->expr && !stmt->loop_init->expr->is_float && stmt->loop_init->expr->type_size < 8) {
@@ -663,6 +708,16 @@ static void cgen_stmt(AstNode *stmt) {
                         if (locals[i].is_float) {
                             emit1(0xF2); emit1(0x0F); emit1(0x11);
                             emit1(0x45); emit1(locals[i].offset & 0xFF);
+                        } else if (locals[i].size > 8) {
+                            /* 大结构体赋值：cgen_expr 返回指针（RAX），
+                             * 从 [RAX] 拷贝 locals[i].size 字节到局部变量 */
+                            e1(0x48); e1(0x89); e1(0xC6);  /* mov rsi, rax */
+                            if (disp8_fits(locals[i].offset))
+                                { e1(0x48); e1(0x8D); e1(0x7D); e1(locals[i].offset & 0xFF); }
+                            else
+                                { e1(0x48); e1(0x8D); e1(0xBD); e4(locals[i].offset); }
+                            e1(0xB9); e4(locals[i].size);  /* mov ecx, size */
+                            e1(0xF3); e1(0xA4);            /* rep movsb */
                         } else if (locals[i].size == 8) {
                             /* int → long：仅对简单 4 字节源符号扩展 */
                             if (stmt->expr && !stmt->expr->is_float && stmt->expr->type_size < 8) {
@@ -715,6 +770,16 @@ static void cgen_func_def(AstNode *func) {
     collect_locals(func);
     scope_depth = 0;
 
+    /* 记录当前函数的返回类型大小 */
+    current_func_ret_size = func->type_size;
+    current_hidden_ptr_offset = 0;
+
+    /* 大结构体返回值（>16 字节）：为隐藏指针分配栈槽 */
+    if (func->type_size > 16) {
+        frame_size += 8;
+        current_hidden_ptr_offset = -frame_size;
+    }
+
     /* 可变参数函数：在帧底追加 48 字节寄存器保存区（局部变量之后） */
     if (is_variadic) frame_size += 48;
 
@@ -726,6 +791,15 @@ static void cgen_func_def(AstNode *func) {
     func_nparams = func->ival;
 
     emit_prologue();
+
+    /* 保存隐藏指针参数（RDI）到大结构体返回值函数 */
+    if (current_hidden_ptr_offset) {
+        /* mov [rbp+current_hidden_ptr_offset], rdi */
+        if (disp8_fits(current_hidden_ptr_offset))
+            { e1(0x48); e1(0x89); e1(0x7D); e1(current_hidden_ptr_offset & 0xFF); }
+        else
+            { e1(0x48); e1(0x89); e1(0xBD); e4(current_hidden_ptr_offset); }
+    }
 
     /* 如果是 main 函数，发射全局变量初始化代码 */
     if (func->name && strcmp(func->name, "main") == 0 && global_init_prog) {
@@ -766,6 +840,7 @@ static void cgen_func_def(AstNode *func) {
         int float_reg = 0;
         AstNode *p;
         int pi;
+        int hshift = current_hidden_ptr_offset ? 1 : 0;  /* hidden ptr occupies RDI */
         for (p = func->params, pi = 0; p && pi < func_nparams; p = p->next, pi++) {
             if (p->kind == AST_VAR_DECL && p->name) {
                 int i;
@@ -782,11 +857,12 @@ static void cgen_func_def(AstNode *func) {
                         } else {
                             int param_size = locals[i].size;
                             int use64 = (param_size == 8);
-                            if (int_reg < 6) {
+                            int r = int_reg + hshift;  /* physical register number (RDI=0) */
+                            if (r < 6) {
                                 /* 使用正确的数据宽度存储参数（防止 char/short 的 32-bit 存储覆写相邻变量） */
                                 if (param_size == 1) {
                                     /* 8-bit store: mov [rbp+off], dil/sil/dl/cl/r8b/r9b */
-                                    switch (int_reg) {
+                                    switch (r) {
                                     case 0: e1(0x40); e1(0x88); e1(0x7D); break;
                                     case 1: e1(0x40); e1(0x88); e1(0x75); break;
                                     case 2: e1(0x88); e1(0x55); break;
@@ -797,10 +873,8 @@ static void cgen_func_def(AstNode *func) {
                                     e1(locals[i].offset & 0xFF);
                                 } else {
                                     if (param_size == 2) e1(0x66);  /* 16-bit prefix */
-                                    /* REX 前缀：r0-r3 用 REX.W (0x48)，r4-r5 用 REX.WR (0x4C)
-                                     * 不能写 if(use64) e1(0x48) 再接 case 4/5 的 e1(0x44)，
-                                     * 因为双 REX 前缀会被 CPU 忽略第一个，W 位丢失 */
-                                    switch (int_reg) {
+                                    /* REX 前缀：r0-r3 用 REX.W (0x48)，r4-r5 用 REX.WR (0x4C) */
+                                    switch (r) {
                                     case 0: if (use64) e1(0x48); e1(0x89); e1(0x7D); break;
                                     case 1: if (use64) e1(0x48); e1(0x89); e1(0x75); break;
                                     case 2: if (use64) e1(0x48); e1(0x89); e1(0x55); break;
@@ -811,8 +885,8 @@ static void cgen_func_def(AstNode *func) {
                                     e1(locals[i].offset & 0xFF);
                                 }
                             } else {
-                                /* 7th+ 参数来自栈：[rbp + 0x10 + (int_reg-6)*8] */
-                                int sd = 0x10 + (int_reg - 6) * 8;
+                                /* 7th+ 参数来自栈：[rbp + 0x10 + (r-6)*8] */
+                                int sd = 0x10 + (r - 6) * 8;
                                 if (param_size == 1) {
                                     e1(0x0F); e1(0xB6); e1(0x45); e1(sd & 0xFF); /* movzx eax, byte [rbp+sd] */
                                     emit_store_rbp8(locals[i].offset); /* mov [rbp+off], al */
@@ -882,6 +956,8 @@ void cgen_init(void) {
         global_elem_size[_i] = 0;
         global_base_elem_size[_i] = 0;
     }
+    func_ret_count = 0;
+    current_func_ret_size = 0;
 }
 
 void cgen_program(AstNode *prog) {
@@ -914,6 +990,18 @@ void cgen_program(AstNode *prog) {
         }
     }
     elf_bss_size = bss_offset;
+
+    /* Phase 1.5: 收集函数返回类型（供 struct 按值返回的 caller 侧使用） */
+    func_ret_count = 0;
+    for (AstNode *node = prog->body; node; node = node->next) {
+        if (node->kind == AST_FUNC_DEF && node->name) {
+            if (func_ret_count < MAX_FUNC_RET_TYPES) {
+                func_ret_names[func_ret_count] = node->name;
+                func_ret_sizes[func_ret_count] = node->type_size;
+                func_ret_count++;
+            }
+        }
+    }
 
     /* Phase 2: 生成函数代码 + 顶层 asm */
     for (AstNode *node = prog->body; node; node = node->next) {

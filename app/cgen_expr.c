@@ -1598,6 +1598,14 @@ void cgen_expr(AstNode *node) {
             indirect_call = 1;
         }
 
+        /* 检查被调函数是否返回大结构体（>16 字节），需要传递隐藏指针 */
+        int has_hidden_ret = 0;
+        int hidden_alloc_size = 0;
+        if (node->name && !is_fptr) {
+            int rsz = get_func_ret_size(node->name);
+            if (rsz > 16) has_hidden_ret = 1;
+        }
+
         /* 求值参数：float 用 push_xmm0，int 用 push_rax
          *
          * 参数在栈上的布局决定了 pop 循环能否正确取出寄存器参数。
@@ -1640,6 +1648,19 @@ void cgen_expr(AstNode *node) {
                 }
             }
         }
+        /* Phase 3: 大结构体返回值 — 先分配返回空间并压入隐藏指针（沉到栈底，最后 pop 到 RDI） */
+        if (has_hidden_ret) {
+            int rsz = get_func_ret_size(node->name);
+            hidden_alloc_size = (rsz + 15) & -16;
+            if (hidden_alloc_size <= 127) {
+                e1(0x48); e1(0x83); e1(0xEC); e1(hidden_alloc_size);
+            } else {
+                e1(0x48); e1(0x81); e1(0xEC); e4(hidden_alloc_size);
+            }
+            e1(0x48); e1(0x8D); e1(0x04); e1(0x24);  /* lea rax, [rsp] */
+            push_rax();  /* hidden ptr, will be popped last into RDI */
+        }
+
         /* Phase 2: push 寄存器参数（0-5）后入栈 → 在栈顶，pop 循环直接弹出 */
         arg = node->args;
         for (idx = 0; arg && idx < argc && idx < 6; idx++) {
@@ -1661,42 +1682,57 @@ void cgen_expr(AstNode *node) {
           }
         }
 
-        for (int ai = argc - 1; ai >= 0; ai--) {
-            /* 7th+ args stay on stack (x86_64 ABI) */
-            if (ai >= 6) continue;
-            if (arg_is_float[ai]) {
-                /* 从栈弹到 xmm[ai] */
-                e1(0xF2); e1(0x0F); e1(0x10);
-                e1(0x04 | ((ai & 7) << 3)); e1(0x24);  /* movsd xmmN, [rsp] */
-                e1(0x48); e1(0x83); e1(0xC4); e1(0x08); /* add rsp, 8 */
-            } else if (ai == 3) {
-                /* arg3 在 rcx 中 — 弹出到 rcx 不覆写后续操作 */
-                pop_rcx();
-            } else {
-                /* 弹出到 rax 再移动到目标寄存器，避免覆写 rcx */
-                pop_rax();
-                int use64 = 1;  /* 总用 64 位传参，防 type_size 丢失导致指针截断 */
-                switch (ai) {
-                case 0:
-                    if (use64) { e1(0x48); e1(0x89); e1(0xC7); }
-                    else { e1(0x89); e1(0xC7); }
-                    break;
-                case 1:
-                    if (use64) { e1(0x48); e1(0x89); e1(0xC6); }
-                    else { e1(0x89); e1(0xC6); }
-                    break;
-                case 2:
-                    if (use64) { e1(0x48); e1(0x89); e1(0xC2); }
-                    else { e1(0x89); e1(0xC2); }
-                    break;
-                case 4:
-                    if (use64) { e1(0x49); e1(0x89); e1(0xC0); }
-                    else { e1(0x41); e1(0x89); e1(0xC0); }
-                    break;
-                case 5:
-                    if (use64) { e1(0x49); e1(0x89); e1(0xC1); }
-                    else { e1(0x41); e1(0x89); e1(0xC1); }
-                    break;
+        {
+            int total = argc + has_hidden_ret;
+            for (int ai = total - 1; ai >= 0; ai--) {
+                /* With hidden pointer: pushed first (bottom of stack), popped last into RDI */
+                if (has_hidden_ret && ai == 0) {
+                    pop_rax();
+                    e1(0x48); e1(0x89); e1(0xC7);  /* mov rdi, rax */
+                    continue;
+                }
+                /* Real argument index (without hidden) */
+                int ri = has_hidden_ret ? ai - 1 : ai;
+                /* Register target index (RDI=0, RSI=1, ..., R9=5, stack=6+).
+                 * With hidden pointer, RDI is taken → all real args shift right by 1. */
+                int rt = has_hidden_ret ? ri + 1 : ri;
+                if (rt >= 6) continue;  /* 7th+ stay on stack */
+                if (arg_is_float[ri]) {
+                    e1(0xF2); e1(0x0F); e1(0x10);
+                    e1(0x04 | ((ri & 7) << 3)); e1(0x24);  /* movsd xmm[ri], [rsp] */
+                    e1(0x48); e1(0x83); e1(0xC4); e1(0x08); /* add rsp, 8 */
+                } else {
+                    pop_rax();
+                    int use64 = 1;
+                    switch (rt) {
+                    case 0:
+                        if (use64) { e1(0x48); e1(0x89); e1(0xC7); }
+                        else { e1(0x89); e1(0xC7); }
+                        break;
+                    case 1:
+                        if (use64) { e1(0x48); e1(0x89); e1(0xC6); }
+                        else { e1(0x89); e1(0xC6); }
+                        break;
+                    case 2:
+                        if (use64) { e1(0x48); e1(0x89); e1(0xC2); }
+                        else { e1(0x89); e1(0xC2); }
+                        break;
+                    case 3:
+                        /* RCX already in hand from pop_rax? No need for special pop_rcx
+                         * since we already popped into RAX uniformly */
+                        /* But pop_rcx optimization saves a mov. Use it when target is RCX
+                         * without clobbering other state. For simplicity, stay uniform. */
+                        e1(0x48); e1(0x89); e1(0xC1);  /* mov rcx, rax */
+                        break;
+                    case 4:
+                        if (use64) { e1(0x49); e1(0x89); e1(0xC0); }
+                        else { e1(0x41); e1(0x89); e1(0xC0); }
+                        break;
+                    case 5:
+                        if (use64) { e1(0x49); e1(0x89); e1(0xC1); }
+                        else { e1(0x41); e1(0x89); e1(0xC1); }
+                        break;
+                    }
                 }
             }
         }
@@ -1718,6 +1754,14 @@ void cgen_expr(AstNode *node) {
         if (argc > 6) {
             int stack_args = argc - 6;
             e1(0x48); e1(0x83); e1(0xC4); e1(stack_args * 8);  /* add rsp, N */
+        }
+        /* 大结构体返回值：清理隐藏指针分配的空间 */
+        if (hidden_alloc_size > 0) {
+            if (hidden_alloc_size <= 127) {
+                e1(0x48); e1(0x83); e1(0xC4); e1(hidden_alloc_size);
+            } else {
+                e1(0x48); e1(0x81); e1(0xC4); e4(hidden_alloc_size);
+            }
         }
         /* 若调用返回 double，标记节点 */
         if (node->is_float)

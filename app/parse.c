@@ -2438,6 +2438,7 @@ AstNode *parse_program(Parser *p) {
                 func->is_static = current_static;
                 func->is_variadic = is_variadic_f;
                 func->ival = pcount;
+                func->type_size = typesize;  /* 存储返回类型大小，供 struct 按值返回使用 */
                 *tail = func;
                 tail = &func->next;
             }

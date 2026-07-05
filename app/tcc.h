@@ -336,6 +336,20 @@ extern int reg_save_offset;
 extern int func_nparams;
 extern int scope_depth;   /* 当前作用域深度（用于变量阴影解析） */
 
+/* ─── 函数返回类型表（供 struct 按值返回的 caller 侧使用） ─── */
+#define MAX_FUNC_RET_TYPES 512
+extern const char *func_ret_names[MAX_FUNC_RET_TYPES];
+extern int func_ret_sizes[MAX_FUNC_RET_TYPES];
+extern int func_ret_count;
+static inline int get_func_ret_size(const char *name) {
+    int i;
+    if (!name) return 0;
+    for (i = 0; i < func_ret_count; i++)
+        if (func_ret_names[i] && strcmp(func_ret_names[i], name) == 0)
+            return func_ret_sizes[i];
+    return 0;
+}
+
 /* ─── 类型系统（Phase 3） ─── */
 
 #define MAX_MEMBERS 128
