@@ -492,7 +492,10 @@ Token lexer_next(Lexer *lx) {
     case ',': t.kind = TOK_COMMA; break;
     case '?': t.kind = TOK_QUESTION; break;
     case '~': t.kind = TOK_TILDE; break;
-    case '^': t.kind = TOK_CARET; break;
+    case '^':
+        if (input_peek(lx) == '=') { advance(lx); t.kind = TOK_CARET_EQ; }
+        else t.kind = TOK_CARET;
+        break;
 
     case '.':
         if (is_digit(input_peek(lx))) {

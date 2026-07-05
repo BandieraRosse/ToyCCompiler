@@ -71,7 +71,7 @@ ALL_OBJS := $(sort $(TCC_OBJS) $(TPP_OBJS) $(TAS_OBJS))
 
 # ─── 默认目标 ──────────────────────────────────────────────────
 
-.PHONY: all install clean test test-all
+.PHONY: all install clean test test-all test-source
 
 all: $(BUILD)/tcc $(BUILD)/tpp $(BUILD)/tas
 
@@ -175,6 +175,34 @@ test: $(BUILD)/tcc $(BUILD)/tcc_rt.o $(BUILD)/tcc_rt_start.o
 
 %:
 	@:
+
+# ─── 源文件独立测试（source）：gcc 编译，验证单个源文件逻辑 ──
+
+SOURCETESTDIR := compiler-tests/source
+
+SCTEST_CC   ?= gcc
+SCTEST_CFLAGS ?= -nostdlib -ffreestanding -Wall -Wextra
+
+test-source: $(SOURCETESTDIR)/lex.c
+	@ok=0; fail=0; \
+	for f in $(SOURCETESTDIR)/*.c; do \
+		name=$$(basename "$$f" .c); \
+		expect=$$(sed -n 's/.*EXPECT: *\([0-9]*\).*/\1/p' "$$f" | head -1); \
+		[ -z "$$expect" ] && expect=0; \
+		printf "  $(BLUE)source:$$name$(RESET) ... "; \
+		$(SCTEST_CC) $(SCTEST_CFLAGS) -Wl,-e,__tlibc_start "$$f" -o /tmp/test_$$name 2>/dev/null; \
+		if [ $$? -ne 0 ]; then \
+			printf "$(RED)COMPILE FAIL$(RESET)\n"; fail=$$((fail+1)); continue; \
+		fi; \
+		/tmp/test_$$name > /tmp/test_$$name.log 2>&1; got=$$?; \
+		if [ "$$got" = "$$expect" ]; then \
+			printf "$(GREEN)ok$(RESET) (%d)\n" "$$got"; ok=$$((ok+1)); \
+		else \
+			printf "$(RED)FAIL$(RESET) (want %d got %d)\n" "$$expect" "$$got"; fail=$$((fail+1)); \
+		fi; \
+	done; \
+	printf "  -> %d passed, %d failed\n" "$$ok" "$$fail"; \
+	[ "$$fail" -eq 0 ]
 
 # ─── 自举测试（selfhost）：tcc 独自编译，不依赖 tcc_rt.o / tcc_rt_start.o ──
 
