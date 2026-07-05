@@ -19,6 +19,7 @@
 #define ELF_MAX_SYMS 8192
 #define ELF_MAX_RELS 16384
 #define ELF_CODE_BUF_SIZE 262144  /* (256 * 1024) */
+#define DATA_BUF_SIZE 262144      /* .data 段缓冲区 (256*1024) */
 
 typedef struct {
     const char *name;
@@ -26,7 +27,7 @@ typedef struct {
     int size;
     int is_global;
     int is_func;
-    int shndx;       /* 节区索引：1=.text, 3=.bss */
+    int shndx;       /* 节区索引：1=.text, 3=.data, 4=.bss */
     int sym_idx;
 } ElfWriteSym;
 
@@ -39,7 +40,12 @@ extern int elf_sym_count;
 extern Elf64_Rela elf_rels[ELF_MAX_RELS];
 extern int elf_rel_count;
 
-/* ─── .bss 跟踪 ─── */
+/* ─── .data 跟踪 ─── */
+
+extern unsigned char elf_data_buf[DATA_BUF_SIZE];
+extern int elf_data_size;
+extern Elf64_Rela elf_data_rels[ELF_MAX_RELS];
+extern int elf_data_rel_count;
 
 extern int elf_bss_size;
 

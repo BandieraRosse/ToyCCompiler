@@ -1798,6 +1798,30 @@ AstNode *parse_compound_statement(Parser *p) {
                 /* 第一个变量的初始化 */
                 if (match(p, TOK_EQ)) {
                     if (peek(p).kind == TOK_LBRACE) {
+                        /* 检查是否为 struct 初始化（而非数组） */
+                        int struct_brace = 0;
+                        Member struct_mems[MAX_MEMBERS];
+                        int struct_mem_cnt = 0;
+                        if (dv_ptrs == 0 && ts > 0 && bracket_count == 0) {
+                            if (decl_typedef_tag) {
+                                int ti;
+                                for (ti = 0; ti < typedef_count; ti++) {
+                                    if (strcmp(typedef_table[ti].name, decl_typedef_tag) == 0 &&
+                                        typedef_table[ti].member_count > 0) {
+                                        struct_brace = 1;
+                                        struct_mem_cnt = typedef_table[ti].member_count;
+                                        int mi; for (mi = 0; mi < struct_mem_cnt && mi < MAX_MEMBERS; mi++)
+                                            struct_mems[mi] = typedef_table[ti].members[mi];
+                                        break;
+                                    }
+                                }
+                            } else if (last_struct_member_count > 0) {
+                                struct_brace = 1;
+                                struct_mem_cnt = last_struct_member_count;
+                                int mi; for (mi = 0; mi < struct_mem_cnt && mi < MAX_MEMBERS; mi++)
+                                    struct_mems[mi] = last_struct_members[mi];
+                            }
+                        }
                         /* { expr1, expr2, ... } — 简单数组初始化 */
                         consume(p);
                         AstNode *prev_init = NULL;
@@ -1807,29 +1831,48 @@ AstNode *parse_compound_statement(Parser *p) {
                             AstNode *ie = parse_expr(p);
                             if (!ie && p->lexer->pos == ipos) { consume(p); continue; }
                             if (ie && decl->name) {
-                                /* 构建 a[i] = expr 赋值节点 */
-                                AstNode *idx = new_ast(p, AST_CONSTANT);
-                                idx->ival = init_idx;
-                                AstNode *sub = new_ast(p, AST_BINOP);
-                                sub->op = TOK_LBRACKET;
-                                AstNode *var = new_ast(p, AST_VAR);
-                                var->name = decl->name;
-                                sub->left = var;
-                                sub->right = idx;
-                                AstNode *assign = new_ast(p, AST_ASSIGN);
-                                assign->left = sub;
-                                assign->right = ie;
-                                assign->type_size = (ts > 0 ? ts : 4);
-                                if (prev_init) prev_init->next = assign;
-                                else decl->expr = assign;
-                                prev_init = assign;
+                                if (struct_brace && init_idx < struct_mem_cnt) {
+                                    /* struct 初始化：s.member = expr */
+                                    AstNode *var = new_ast(p, AST_VAR);
+                                    var->name = decl->name;
+                                    AstNode *member = new_ast(p, AST_MEMBER);
+                                    member->left = var;
+                                    member->member_name = struct_mems[init_idx].name;
+                                    member->ival = struct_mems[init_idx].offset;
+                                    member->type_size = struct_mems[init_idx].size;
+                                    AstNode *assign = new_ast(p, AST_ASSIGN);
+                                    assign->left = member;
+                                    assign->right = ie;
+                                    assign->type_size = struct_mems[init_idx].size;
+                                    if (prev_init) prev_init->next = assign;
+                                    else decl->expr = assign;
+                                    prev_init = assign;
+                                } else {
+                                    /* 数组初始化：a[i] = expr */
+                                    AstNode *idx = new_ast(p, AST_CONSTANT);
+                                    idx->ival = init_idx;
+                                    AstNode *sub = new_ast(p, AST_BINOP);
+                                    sub->op = TOK_LBRACKET;
+                                    AstNode *var = new_ast(p, AST_VAR);
+                                    var->name = decl->name;
+                                    sub->left = var;
+                                    sub->right = idx;
+                                    AstNode *assign = new_ast(p, AST_ASSIGN);
+                                    assign->left = sub;
+                                    assign->right = ie;
+                                    assign->type_size = (ts > 0 ? ts : 4);
+                                    if (prev_init) prev_init->next = assign;
+                                    else decl->expr = assign;
+                                    prev_init = assign;
+                                }
                             }
                             init_idx++;
                             if (peek(p).kind == TOK_COMMA) consume(p);
                         }
                         if (peek(p).kind == TOK_RBRACE) consume(p);
                         /* 根据初始化元素修正数组大小（int arr[] = {1,2,3} → 3 元素） */
-                        if (dim_count == 0 && init_idx > 0) {
+                        /* struct 初始化的变量大小 = sizeof(struct)，不由 init_idx 修正 */
+                        if (!struct_brace && dim_count == 0 && init_idx > 0) {
                             int elem_ts = (dv_ptrs > 0) ? 8 : (ts > 0 ? ts : 4);
                             decl->ival = init_idx * elem_ts;
                             decl->type_size = decl->ival;
@@ -2480,11 +2523,13 @@ AstNode *parse_program(Parser *p) {
                     /* 处理数组后缀 [N][M]...（多层） */
                     int gv_arr_len = 1;
                     int gv_bracket_count = 0;
+                    int gv_unspecified_dim = 0;  /* [] 空维度标记 */
                     while (peek(p).kind == TOK_LBRACKET) {
                         gv_bracket_count++;
                         consume(p);
                         if (peek(p).kind == TOK_RBRACKET) {
-                            /* 空维度 char buf[] — 无操作 */
+                            /* 空维度 char buf[] — 标记为未指定，后续由初始化器决定 */
+                            gv_unspecified_dim = 1;
                         } else {
                             /* 维度表达式：char buf[4], buf[4*1024], buf[(4)] */
                             AstNode *dim_expr = parse_expr(p);
@@ -2536,13 +2581,58 @@ AstNode *parse_program(Parser *p) {
                     /* 保存初始化器 */
                     if (match(p, TOK_EQ)) {
                         if (peek(p).kind == TOK_LBRACE) {
-                            int d = 1; consume(p);
-                            while (d > 0 && peek(p).kind != TOK_EOF) {
-                                if (peek(p).kind == TOK_LBRACE) d++;
-                                if (peek(p).kind == TOK_RBRACE) d--;
-                                if (d) consume(p);
+                            /* 先计数顶层元素，用于推断未指定数组维数 */
+                            int init_count = 0;
+                            {
+                                const char *save_pos = p->lexer->pos;
+                                int save_line = p->lexer->line;
+                                int save_col = p->lexer->col;
+                                Token save_tok = p->tok;
+
+                                int brace_depth = 1;
+                                int paren_depth = 0;
+                                consume(p);  /* skip { */
+                                while (brace_depth > 0 && peek(p).kind != TOK_EOF) {
+                                    TokenKind tk = peek(p).kind;
+                                    if (tk == TOK_LPAREN) { paren_depth++; consume(p); }
+                                    else if (tk == TOK_RPAREN) { if (paren_depth > 0) paren_depth--; consume(p); }
+                                    else if (tk == TOK_LBRACE) { brace_depth++; consume(p); }
+                                    else if (tk == TOK_RBRACE) { brace_depth--; if (brace_depth > 0) consume(p); }
+                                    else if (tk == TOK_COMMA && brace_depth == 1 && paren_depth == 0) { init_count++; consume(p); }
+                                    else { consume(p); }
+                                }
+                                if (peek(p).kind == TOK_RBRACE) consume(p);
+                                init_count++;  /* +1 for last element */
+
+                                p->lexer->pos = save_pos;
+                                p->lexer->line = save_line;
+                                p->lexer->col = save_col;
+                                p->tok = save_tok;
                             }
-                            if (peek(p).kind == TOK_RBRACE) consume(p);
+                            /* 如果数组维数未指定（[]），用计数修正 */
+                            if (gv_unspecified_dim && init_count > 0) {
+                                gv_arr_len *= init_count;
+                                gv_total = gv_unit * gv_arr_len;
+                                if (gvar) {
+                                    gvar->ival = gv_total;
+                                    gvar->type_size = gv_total;
+                                    gvar->elem_size = gv_unit;
+                                }
+                            }
+                            /* 标记为有初始化器（供 .data 段分配），然后跳过大括号内容 */
+                            if (gvar) {
+                                gvar->expr = new_ast(p, AST_CONSTANT);
+                                gvar->expr->ival = 0;
+                            }
+                            {
+                                int d = 1; consume(p);
+                                while (d > 0 && peek(p).kind != TOK_EOF) {
+                                    if (peek(p).kind == TOK_LBRACE) d++;
+                                    if (peek(p).kind == TOK_RBRACE) d--;
+                                    if (d) consume(p);
+                                }
+                                if (peek(p).kind == TOK_RBRACE) consume(p);
+                            }
                         } else if (gvar) {
                             gvar->expr = parse_expr(p);
                         } else {

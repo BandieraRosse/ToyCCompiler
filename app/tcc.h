@@ -15,13 +15,17 @@
 
 #include "tcc_need.h"
 #include "elf.h"
-#include "elf_write.h"
 
 /* ─── 缓冲区容量（固定分配，溢出时安全报错退出） ─── */
 
 #define CODE_BUF_SIZE  262144  /* 代码生成缓冲区 (256*1024) */
 #define STRTAB_SIZE    262144  /* ELF 字符串表 (256*1024) */
 #define STRPOOL_SIZE   262144  /* 字符串字面量池 (256*1024) */
+#ifndef DATA_BUF_SIZE
+#define DATA_BUF_SIZE  262144  /* .data 段原始数据缓冲区 (256*1024) */
+#endif
+
+#include "elf_write.h"
 
 /* ─── Arena 分配器 ─── */
 
@@ -262,6 +266,18 @@ extern int elf_sym_count;
 extern Elf64_Rela elf_rels[MAX_RELS];
 extern int elf_rel_count;
 extern int elf_bss_size;
+extern int elf_data_size;
+
+/* .data 段缓冲区（映射到 elf_write.c 的全局变量） */
+#define data_buf        elf_data_buf
+#define data_size       elf_data_size
+#define data_rels       elf_data_rels
+#define data_rel_count  elf_data_rel_count
+
+extern unsigned char elf_data_buf[DATA_BUF_SIZE];
+extern int elf_data_size;
+extern Elf64_Rela elf_data_rels[MAX_RELS];
+extern int elf_data_rel_count;
 
 extern char strtab[STRTAB_SIZE];
 extern int strtab_len;

@@ -32,6 +32,7 @@ int sym_count;
 Elf64_Rela rels[MAX_RELS];
 int rel_count;
 
+
 char strtab[STRTAB_SIZE];
 int strtab_len;
 
@@ -61,6 +62,7 @@ const char *func_ret_names[MAX_FUNC_RET_TYPES];
 int func_ret_sizes[MAX_FUNC_RET_TYPES];
 int func_ret_count;
 static int current_func_ret_size;
+static const char *current_func_name;
 static int current_hidden_ptr_offset;  /* hidden pointer 栈槽的 RBP 偏移 */
 
 /* ─── 标签和回填 ─── */
@@ -275,6 +277,7 @@ static void collect_locals(AstNode *node) {
         local_count = 0;
         frame_size = 0;
         scope_depth = 0;
+        current_func_name = node->name;
         collect_locals(node->body);
         break;
     case AST_BLOCK:
@@ -284,7 +287,25 @@ static void collect_locals(AstNode *node) {
         scope_depth--;
         break;
     case AST_VAR_DECL:
-        if (local_count < MAX_LOCALS && node->name) {
+        if (node->is_static && node->name) {
+            /* 静态局部变量 → BSS（非栈上），编译期间持久化 */
+            int vsize = node->ival > 0 ? node->ival : 4;
+            elf_bss_size = (elf_bss_size + 7) & -8;
+            if (sym_count < MAX_SYMS) {
+                CgenSym *s = &syms[sym_count];
+                s->name = node->name;
+                s->offset = elf_bss_size;
+                s->size = vsize;
+                s->is_global = 0;  /* STB_LOCAL */
+                s->is_func = 0;
+                s->shndx = 4;  /* .bss */
+                s->sym_idx = -1;
+                global_elem_size[sym_count] = (vsize > 8) ? node->elem_size : 0;
+                global_base_elem_size[sym_count] = node->base_elem_size;
+                sym_count++;
+            }
+            elf_bss_size += vsize;
+        } else if (local_count < MAX_LOCALS && node->name) {
             int sz = node->ival > 0 ? node->ival : 4;
             frame_size += sz;
             locals[local_count].name = node->name;
@@ -942,6 +963,8 @@ void cgen_init(void) {
     code_size = 0;
     sym_count = 0;
     rel_count = 0;
+    data_size = 0;
+    data_rel_count = 0;
     local_count = 0;
     frame_size = 0;
     reg_save_offset = 0;
@@ -952,6 +975,7 @@ void cgen_init(void) {
     strpool_size = 0;
     str_info_count = 0;
     elf_bss_size = 0;
+    elf_data_size = 0;
     for (int _i = 0; _i < MAX_SYMS; _i++) {
         global_elem_size[_i] = 0;
         global_base_elem_size[_i] = 0;
@@ -965,31 +989,41 @@ void cgen_program(AstNode *prog) {
 
     global_init_prog = prog;
 
-    /* Phase 1: 收集全局变量到 .bss */
+    /* Phase 1: 收集全局变量 */
     int bss_offset = 0;
+    int data_offset = 0;
     for (AstNode *node = prog->body; node; node = node->next) {
         if (node->kind == AST_VAR_DECL) {
             int vsize = node->ival > 0 ? node->ival : 4;
-            /* 对齐到 8 字节 */
-            bss_offset = (bss_offset + 7) & -8;
             if (sym_count < MAX_SYMS) {
                 int si = sym_count;
                 CgenSym *s = &syms[si];
                 s->name = node->name;
-                s->offset = bss_offset;
                 s->size = vsize;
                 s->is_global = !node->is_static;
                 s->is_func = 0;
-                s->shndx = 3;  /* .bss section */
                 s->sym_idx = -1;
                 global_elem_size[si] = (vsize > 8) ? node->elem_size : 0;
                 global_base_elem_size[si] = node->base_elem_size;
+                if (node->expr) {
+                    /* 有初始化器 → .data 段 */
+                    data_offset = (data_offset + 7) & -8;
+                    s->offset = data_offset;
+                    s->shndx = 3;  /* .data */
+                    data_offset += vsize;
+                } else {
+                    /* 无初始化器 → .bss 段 */
+                    bss_offset = (bss_offset + 7) & -8;
+                    s->offset = bss_offset;
+                    s->shndx = 4;  /* .bss */
+                    bss_offset += vsize;
+                }
                 sym_count++;
             }
-            bss_offset += vsize;
         }
     }
     elf_bss_size = bss_offset;
+    elf_data_size = data_offset;
 
     /* Phase 1.5: 收集函数返回类型（供 struct 按值返回的 caller 侧使用） */
     func_ret_count = 0;
