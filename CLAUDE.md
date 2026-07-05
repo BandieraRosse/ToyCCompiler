@@ -24,6 +24,9 @@
 │   ├── tcc_need.h      # 最小化类型/常量/系统调用宏/函数声明
 │   └── elf.h           # ELF64 结构体定义
 ├── compiler-tests/     # 测试文件
+│   ├── *.c             # 常规测试（tcc 编译 + 运行时链接，27 个）
+│   ├── selfhost/       # 自举测试（tcc 编译，无运行时依赖，12 个）
+│   └── source/         # 源文件独立测试（验证单个 .c 文件的逻辑，8 个）
 ├── ld.script           # 链接脚本
 └── Makefile            # 构建系统
 ```
@@ -32,8 +35,11 @@
 
 ```sh
 make               # 构建 tcc、tpp、tas → build/
-make test          # 运行常规测试
+make test          # 运行常规测试（compiler-tests/*.c）
 make test 03       # 运行指定编号测试
+make test-source                  # 源文件独立测试（compiler-tests/source/，gcc 编译）
+make test-source SCTEST_USE_TCC=1  # ↑ 同上，但改用 build/tcc 编译（自举验证）
+                                  # 日志在 tmp/test_source_*.log（运行、编译、链接）
 make test-selfhost # 自举测试（tcc 独自编译，不依赖运行时对象）
 make clean
 ```
@@ -89,7 +95,6 @@ tcc 尚未完备实现 C 标准。编写自举测试（`compiler-tests/selfhost/
 | `inline` 关键字 | 解析但语义忽略 |
 | 宽字符/宽字符串 | 未实现 |
 | `long double` | 降级为 double |
-| 函数返回 struct 或 union | 未实现，寄存器溢出处理不完整 |
 | `goto` 跨函数 | 未检查 |
 
 ### ✅ 安全的 selfhost 测试模板

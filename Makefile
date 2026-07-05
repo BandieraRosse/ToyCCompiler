@@ -196,32 +196,32 @@ test-source: $(SOURCETESTDIR)/lex.c
 else
 test-source: $(BUILD)/tcc
 endif
-	@ok=0; fail=0; \
+	@ok=0; fail=0; mkdir -p tmp; \
 	for f in $(SOURCETESTDIR)/*.c; do \
 		name=$$(basename "$$f" .c); \
 		expect=$$(sed -n 's/.*EXPECT: *\([0-9]*\).*/\1/p' "$$f" | head -1); \
 		[ -z "$$expect" ] && expect=0; \
 		printf "  $(BLUE)source:$$name$(RESET) ... "; \
 		if [ -n "$(SCTEST_USE_TCC)" ]; then \
-			$(BUILD)/tcc "$$f" -o /tmp/$$name.o 2>/dev/null; \
+			$(BUILD)/tcc "$$f" -o /tmp/$$name.o 2>tmp/test_source_$$name-compile.log; \
 			if [ $$? -ne 0 ]; then \
 				printf "$(RED)COMPILE FAIL$(RESET)\n"; fail=$$((fail+1)); continue; \
 			fi; \
-			$(LD) $(SCTEST_LDFLAGS) /tmp/$$name.o -o /tmp/test_$$name 2>/dev/null; \
+			$(LD) $(SCTEST_LDFLAGS) /tmp/$$name.o -o /tmp/test_$$name 2>tmp/test_source_$$name-link.log; \
 			if [ $$? -ne 0 ]; then \
 				printf "$(RED)LINK FAIL$(RESET)\n"; fail=$$((fail+1)); continue; \
 			fi; \
 		else \
-			$(SCTEST_CC) $(SCTEST_CFLAGS) -Wl,-e,__tlibc_start "$$f" -o /tmp/test_$$name 2>/dev/null; \
+			$(SCTEST_CC) $(SCTEST_CFLAGS) -Wl,-e,__tlibc_start "$$f" -o /tmp/test_$$name 2>tmp/test_source_$$name-compile.log; \
 			if [ $$? -ne 0 ]; then \
 				printf "$(RED)COMPILE FAIL$(RESET)\n"; fail=$$((fail+1)); continue; \
 			fi; \
 		fi; \
-		/tmp/test_$$name > /tmp/test_$$name.log 2>&1; got=$$?; \
+		/tmp/test_$$name > tmp/test_source_$$name.log 2>&1; got=$$?; \
 		if [ "$$got" = "$$expect" ]; then \
 			printf "$(GREEN)ok$(RESET) (%d)\n" "$$got"; ok=$$((ok+1)); \
 		else \
-			printf "$(RED)FAIL$(RESET) (want %d got %d)\n" "$$expect" "$$got"; fail=$$((fail+1)); \
+			printf "$(RED)FAIL$(RESET) (want %d got %d) — log: tmp/test_source_$$name.log\n" "$$expect" "$$got"; fail=$$((fail+1)); \
 		fi; \
 	done; \
 	printf "  -> %d passed, %d failed\n" "$$ok" "$$fail"; \
