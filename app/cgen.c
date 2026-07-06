@@ -389,12 +389,15 @@ static void cgen_return(AstNode *stmt) {
 }
 
 static void cgen_if(AstNode *stmt) {
-    /* cond 求值 → eax，test eax, eax → je else_label */
+    /* cond 求值 → rax，test rax/rax → je else_label */
     cgen_expr(stmt->cond);
-    /* 注意：条件表达式总是生成 int 结果（0 或 1），位于 eax 中。
-     * 裸变量作为条件（如 while(ptr)）走的是 while 循环路径，
-     * if 的条件始终是比较/逻辑表达式结果，用 32 位 test 即可。 */
-    emit1(0x85); emit1(0xC0);  /* test eax, eax */
+    /* 注意：裸指针作为条件（if(ptr)）时 type_size==8，需用 test rax,rax
+     * 避免截断高 32 位。比较/逻辑表达式结果通常是 32 位 int。 */
+    if (stmt->cond && stmt->cond->type_size == 8) {
+        emit1(0x48); emit1(0x85); emit1(0xC0);  /* test rax, rax */
+    } else {
+        emit1(0x85); emit1(0xC0);  /* test eax, eax */
+    }
 
     int else_label = new_label();
     int end_label = new_label();

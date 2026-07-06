@@ -331,7 +331,9 @@ static void test_basic_constraints(void) {
 
     reset();
     { AstNode v = mk_const(99);
-      AsmOperand in[] = { mk_in("D", &v), mk_in("a", &v) };
+      AsmOperand in[2];
+      in[0].constraint = "D"; in[0].expr = &v;
+      in[1].constraint = "a"; in[1].expr = &v;
       AstNode n = mk_asm("syscall", 2, in, 0, 0);
       cgen_asm(&n);
       CHECK_CODE(0, 0x48, 0x89, 0xC7, 0x0F, 0x05);
@@ -339,9 +341,14 @@ static void test_basic_constraints(void) {
 
     reset();
     { AstNode v = mk_const(0);
-      AsmOperand in[] = { mk_in("D", &v), mk_in("S", &v), mk_in("d", &v),
-                          mk_in("b", &v), mk_in("c", &v), mk_in("a", &v) };
-      AstNode n = mk_asm("syscall", 6, in, 0, 0);
+      AsmOperand tmp_6in[6];
+      tmp_6in[0].constraint = "D"; tmp_6in[0].expr = &v;
+      tmp_6in[1].constraint = "S"; tmp_6in[1].expr = &v;
+      tmp_6in[2].constraint = "d"; tmp_6in[2].expr = &v;
+      tmp_6in[3].constraint = "b"; tmp_6in[3].expr = &v;
+      tmp_6in[4].constraint = "c"; tmp_6in[4].expr = &v;
+      tmp_6in[5].constraint = "a"; tmp_6in[5].expr = &v;
+      AstNode n = mk_asm("syscall", 6, tmp_6in, 0, 0);
       cgen_asm(&n);
       CHECK_CODE(0, 0x48, 0x89, 0xC7, 0x48, 0x89, 0xC6, 0x48, 0x89, 0xC2,
                     0x48, 0x89, 0xC3, 0x48, 0x89, 0xC1, 0x0F, 0x05);
@@ -353,8 +360,12 @@ static void test_r_constraint(void) {
 
     reset();
     { AstNode v = mk_const(0);
-      AsmOperand in[] = { mk_in("r", &v), mk_in("r", &v), mk_in("r", &v), mk_in("a", &v) };
-      AstNode n = mk_asm("syscall", 4, in, 0, 0);
+      AsmOperand tmp_rin[4];
+      tmp_rin[0].constraint = "r"; tmp_rin[0].expr = &v;
+      tmp_rin[1].constraint = "r"; tmp_rin[1].expr = &v;
+      tmp_rin[2].constraint = "r"; tmp_rin[2].expr = &v;
+      tmp_rin[3].constraint = "a"; tmp_rin[3].expr = &v;
+      AstNode n = mk_asm("syscall", 4, tmp_rin, 0, 0);
       cgen_asm(&n);
       CHECK_CODE(0, 0x49, 0x89, 0xC2, 0x49, 0x89, 0xC0, 0x49, 0x89, 0xC1, 0x0F, 0x05);
       CHECK(code_size == 11, "r×3 + a + syscall → 11 bytes"); }
@@ -485,13 +496,17 @@ static void test_multi_r_syscall6(void) {
     run_section("syscall6 Pattern (a+D+S+d+r+r+r)");
 
     reset();
-    AstNode v = mk_const(0);
-    AsmOperand in[] = {
-        mk_in("a", &v), mk_in("D", &v), mk_in("S", &v), mk_in("d", &v),
-        mk_in("r", &v), mk_in("r", &v), mk_in("r", &v),
-    };
-    AstNode n = mk_asm("syscall", 7, in, 0, 0);
-    cgen_asm(&n);
+    AstNode v7 = mk_const(0);
+    AsmOperand in7[7];
+    in7[0].constraint = "a"; in7[0].expr = &v7;
+    in7[1].constraint = "D"; in7[1].expr = &v7;
+    in7[2].constraint = "S"; in7[2].expr = &v7;
+    in7[3].constraint = "d"; in7[3].expr = &v7;
+    in7[4].constraint = "r"; in7[4].expr = &v7;
+    in7[5].constraint = "r"; in7[5].expr = &v7;
+    in7[6].constraint = "r"; in7[6].expr = &v7;
+    AstNode n7 = mk_asm("syscall", 7, in7, 0, 0);
+    cgen_asm(&n7);
     CHECK_CODE(0, 0x48, 0x89, 0xC7, 0x48, 0x89, 0xC6, 0x48, 0x89, 0xC2,
                    0x49, 0x89, 0xC2, 0x49, 0x89, 0xC0, 0x49, 0x89, 0xC1,
                    0x0F, 0x05);

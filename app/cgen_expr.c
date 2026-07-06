@@ -1115,6 +1115,11 @@ void cgen_expr(AstNode *node) {
                 e1(0x66); e1(0x0F); e1(0x2E); e1(0xC8);  /* ucomisd xmm1, xmm0 */
                 e1(0x0F); e1(0x94); e1(0xC0);            /* sete al */
                 e1(0x0F); e1(0xB6); e1(0xC0);            /* movzx eax, al */
+            } else if (node->expr && node->expr->type_size == 8) {
+                /* !ptr: test rax, rax; sete al; movzx eax, al */
+                e1(0x48); e1(0x85); e1(0xC0);  /* test rax, rax */
+                e1(0x0F); e1(0x94); e1(0xC0);           /* sete al */
+                e1(0x0F); e1(0xB6); e1(0xC0);           /* movzx eax, al */
             } else {
                 /* !x: cmp eax, 0; sete al; movzx eax, al */
                 e1(0x85); e1(0xC0);           /* test eax, eax */

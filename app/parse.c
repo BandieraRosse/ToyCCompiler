@@ -1257,20 +1257,29 @@ static int parse_struct_type(Parser *p, StructType *out) {
                 consume(p);
             }
         }
-        out->tag = tag;
+        /* 匿名 struct 使用唯一合成 tag 避免多个匿名 struct 的 tag 冲突 */
+        if (!tag) {
+            static int anon_id;
+            char anon_buf[32];
+            int anon_len = 0;
+            anon_buf[anon_len++] = '@';
+            { int v = anon_id++; int r; do { r = v % 36; anon_buf[anon_len++] = (r < 10) ? ('0'+r) : ('a'+r-10); v /= 36; } while (v); }
+            char *anon_tag = arena_alloc(p->arena, anon_len + 1);
+            int ai; for (ai = 0; ai < anon_len; ai++) anon_tag[ai] = anon_buf[ai];
+            anon_tag[anon_len] = '\0';
+            out->tag = anon_tag;
+        } else {
+            out->tag = tag;
+        }
         /* 保存到 last_struct_* 供变量声明和成员访问使用 */
-        last_struct_tag = tag;
+        last_struct_tag = out->tag;
         last_struct_member_count = out->member_count;
         int mi;
         for (mi = 0; mi < out->member_count && mi < MAX_MEMBERS; mi++)
             last_struct_members[mi] = out->members[mi];
 
-        /* 始终注册到 tag_table（匿名 struct 用空字符串标记） */
-        {
-            const char *reg_tag = tag ? tag : "";
-            StructType *existing = find_struct_tag(reg_tag);
-            if (!existing) add_struct_tag(reg_tag, out);
-        }
+        /* 始终注册到 tag_table */
+        add_struct_tag(out->tag, out);
     } else if (tag) {
         /* struct tag (前置声明或引用) */
         StructType *existing = find_struct_tag(tag);
@@ -1433,8 +1442,8 @@ int parse_type_specifier(Parser *p) {
         last_type_is_unsigned = 0; consume(p);
         StructType st;
         int sz = parse_struct_type(p, &st);
-        if (st.tag && st.member_count > 0)
-            last_struct_tag = st.tag;
+        if (st.member_count > 0)
+            last_struct_tag = st.tag ? st.tag : "";
         return sz > 0 ? sz : 4;
     }
     case TOK_ENUM: {
