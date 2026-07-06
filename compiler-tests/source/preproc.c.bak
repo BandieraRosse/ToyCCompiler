@@ -58,28 +58,6 @@ static void pp_push_level(void) {
     g_pp_level++;
 }
 
-
-/* Flat 1D stack arrays for nested func macro support (avoids tcc 2D array bug) */
-static char *g_pp_ex[1024];
-static int g_pp_ex_len[1024];
-static const char *g_pp_as[1024];
-static int g_pp_al[1024];
-static int g_pp_ac[64];
-static int g_pp_lv;
-
-static void pp_push(void) {
-    int lv = g_pp_lv;
-    int base = lv * 16;
-    g_pp_ac[lv] = g_arg_count;
-    { int si; for (si = 0; si < g_arg_count; si++) {
-        g_pp_as[base + si] = g_arg_starts[si];
-        g_pp_al[base + si] = g_arg_lens[si];
-        g_pp_ex[base + si] = g_expanded_args[si];
-        g_pp_ex_len[base + si] = g_expanded_lens[si];
-    } }
-    g_pp_lv++;
-}
-
 /* Copy skip_cond from source test */
 static void skip_cond(const char *s, int *pos, int len) {
     int d = 0;
@@ -287,20 +265,15 @@ static void pp_full(const char *s, int len, OutBuf *out, int depth) {
                         { int ai; for (ai = 0; ai < g_arg_count; ai++) {
                             while (g_arg_lens[ai] > 0 && pp_ws(g_arg_starts[ai][0])) { g_arg_starts[ai]++; g_arg_lens[ai]--; }
                             while (g_arg_lens[ai] > 0 && pp_ws(g_arg_starts[ai][g_arg_lens[ai]-1])) g_arg_lens[ai]--; } }
-                        int pplv = g_pp_lv;
-                        pp_push();
-                        { int pbase = pplv * 16;
                         { int ai; for (ai = 0; ai < g_arg_count; ai++) {
                             OutBuf ab; ab.data = 0; ab.len = 0; ab.cap = 0;
                             expand_stack[expand_stack_depth++] = fn;
-                            pp_full(g_pp_as[pbase + ai], g_pp_al[pbase + ai], &ab, depth + 1);
+                            pp_save_state();
+                            pp_full(g_arg_starts[ai], g_arg_lens[ai], &ab, depth + 1);
+                            pp_restore_state();
                             expand_stack_depth--;
                             if (ab.data && ab.len > 0) { g_expanded_args[ai] = ab.data; g_expanded_lens[ai] = ab.len; }
-                            else { g_expanded_args[ai] = 0; g_expanded_lens[ai] = 0; }
-                            g_pp_ex[pbase + ai] = g_expanded_args[ai];
-                            g_pp_ex_len[pbase + ai] = g_expanded_lens[ai];
-                        } }
-                        }
+                            else { g_expanded_args[ai] = 0; g_expanded_lens[ai] = 0; } } }
                         OutBuf temp = {0,0,0};
                         if (func_macros[fmi].replacement) {
                             const char *rp = func_macros[fmi].replacement; int rl = func_macros[fmi].repl_len; int ri = 0;
@@ -310,13 +283,13 @@ static void pp_full(const char *s, int len, OutBuf *out, int depth) {
                                 if (ri+1 < rl && rp[ri]=='#' && rp[ri+1]=='#') { ri += 2; while (ri < rl && (rp[ri] == ' ' || rp[ri] == '\t')) ri++; while (temp.len > 0 && (temp.data[temp.len-1] == ' ' || temp.data[temp.len-1] == '\t')) temp.len--; continue; }
                                 if (pp_id(rp[ri])) { int rs = ri; while (ri < rl && pp_id(rp[ri])) ri++;
                                     int pi; int matched2 = 0;
-                                    for (pi = 0; pi < func_macros[fmi].param_count && pi < g_pp_ac[pplv]; pi++) {
+                                    for (pi = 0; pi < func_macros[fmi].param_count && pi < g_arg_count; pi++) {
                                         const char *pn = func_macros[fmi].params[pi]; int jj;
                                         for (jj = 0; jj < ri - rs; jj++) if (pn[jj] != rp[rs+jj]) goto pnm;
                                         if (pn[jj] != '\0') goto pnm;
-                                        { int _eb = pplv * 16 + pi; char *ea = g_pp_ex[_eb]; int el = g_pp_ex_len[_eb];
+                                        { char *ea = g_expanded_args[pi]; int el = g_expanded_lens[pi];
                                           if (ea) { int vj; for (vj = 0; vj < el; vj++) out_putc(&temp, ea[vj]); }
-                                          else { int _ab = pplv * 16 + pi; const char *as = g_pp_as[_ab]; int al = g_pp_al[_ab]; int vj; for (vj = 0; vj < al; vj++) out_putc(&temp, as[vj]); } }
+                                          else { const char *as = g_arg_starts[pi]; int al = g_arg_lens[pi]; int vj; for (vj = 0; vj < al; vj++) out_putc(&temp, as[vj]); } }
                                         matched2 = 1; break; pnm:;
                                     }
                                     if (!matched2) {
@@ -325,12 +298,12 @@ static void pp_full(const char *s, int len, OutBuf *out, int depth) {
                                             for (vk = 0; vk < 11; vk++) if (va[vk] != rp[rs+vk]) { vam = 0; break; }
                                             if (vam) {
                                                 int vai = func_macros[fmi].param_count; int vfirst = 1;
-                                                while (vai < g_pp_ac[pplv]) {
+                                                while (vai < g_arg_count) {
                                                     if (!vfirst) out_putc(&temp, ',');
                                                     vfirst = 0;
-                                                    { int _eb = pplv * 16 + vai; char *ea = g_pp_ex[_eb]; int el = g_pp_ex_len[_eb];
+                                                    { char *ea = g_expanded_args[vai]; int el = g_expanded_lens[vai];
                                                       if (ea) { int vj; for (vj = 0; vj < el; vj++) out_putc(&temp, ea[vj]); }
-                                                      else { int _ab = pplv * 16 + vai; const char *as = g_pp_as[_ab]; int al = g_pp_al[_ab]; int vj; for (vj = 0; vj < al; vj++) out_putc(&temp, as[vj]); } }
+                                                      else { const char *as = g_arg_starts[vai]; int al = g_arg_lens[vai]; int vj; for (vj = 0; vj < al; vj++) out_putc(&temp, as[vj]); } }
                                                     vai++;
                                                 }
                                                 continue;
@@ -348,7 +321,9 @@ static void pp_full(const char *s, int len, OutBuf *out, int depth) {
                             if (depth < 64) {
                                 OutBuf pp_result = { 0, 0, 0 };
                                 expand_stack[expand_stack_depth++] = fn;
+                                pp_save_state();
                                 pp_full(temp.data, temp.len, &pp_result, depth + 1);
+                                pp_restore_state();
                                 expand_stack_depth--;
                                 { int ri2 = 0; while (ri2 < pp_result.len && pp_ws(pp_result.data[ri2])) ri2++;
                                     if (ri2 < pp_result.len && pp_id(pp_result.data[ri2])) {
@@ -369,7 +344,9 @@ static void pp_full(const char *s, int len, OutBuf *out, int depth) {
                                                     OutBuf combined = { 0, 0, 0 }; int ci;
                                                     for (ci = 0; ci < pp_result.len; ci++) out_putc(&combined, pp_result.data[ci]);
                                                     for (ci = paren_start; ci <= scan_pos; ci++) out_putc(&combined, s[ci]);
+                                                    pp_save_state();
                                                     pp_full(combined.data, combined.len, out, depth + 1);
+                                                    pp_restore_state();
                                                     tlibc_free(combined.data); i = scan_pos + 1; used_follow_on = 1; break;
                                                 }
                                             } fnm2:;
@@ -381,9 +358,8 @@ static void pp_full(const char *s, int len, OutBuf *out, int depth) {
                             } else { int ti; for (ti = 0; ti < temp.len; ti++) out_putc(out, temp.data[ti]); }
                             tlibc_free(temp.data);
                         }
-                        { int ai; for (ai = 0; ai < g_pp_ac[pplv]; ai++) { int _eb = pplv * 16 + ai; if (g_pp_ex[_eb]) tlibc_free(g_pp_ex[_eb]); } }
-                        g_pp_lv--;
-						    if (!used_follow_on) { i = ap + 1; }
+                        { int ai; for (ai = 0; ai < g_arg_count; ai++) { if (g_expanded_args[ai]) tlibc_free(g_expanded_args[ai]); } }
+                        if (!used_follow_on) { i = ap + 1; }
                     }
                     break; fnm:;
                 }
@@ -450,7 +426,6 @@ static char *preprocess(const char *src, int len, const char *fname, int *out_le
     expand_stack_depth = 0;
     pp_cond_skip = 0;
     pp_cond_depth = 0;
-    g_pp_lv = 0;
     if (fname) {
         int fnl = 0; while (fname[fnl]) fnl++;
         char *fv = (char *)tlibc_malloc(fnl + 3);
@@ -580,7 +555,6 @@ static void reset(void) {
     expand_stack_depth = 0;
     pp_cond_skip = 0;
     pp_cond_depth = 0;
-    g_pp_lv = 0;
 }
 
 /* 1. 基础对象宏 */

@@ -557,17 +557,22 @@ static AstNode *parse_postfix(Parser *p) {
                     }
                 }
             }
-            /* 回退：仅当未确认 struct 类型时遍历所有 struct tag */
+            /* 回退：当 struct 类型无法从表达式推导时，搜索所有 struct tag。
+             * 对 func().member 模式（AST_CALL left）跳过搜索，因为成员名可能
+             * 匹配多个 struct 的错误偏移（如 kind 在 Keyword 偏移 8，在 Token 偏移 0）。
+             * 对嵌套成员 a.b.c（AST_MEMBER left）则执行搜索。 */
             if (!struct_found && n->ival == 0) {
-                int ti, mi;
-                for (ti = 0; ti < tag_count && n->ival == 0; ti++) {
-                    for (mi = 0; mi < tag_table[ti].member_count; mi++) {
-                        if (strcmp(tag_table[ti].members[mi].name, n->member_name) == 0) {
-                            n->ival = tag_table[ti].members[mi].offset;
-                            n->type_size = tag_table[ti].members[mi].size;
-                            n->is_unsigned = tag_table[ti].members[mi].is_unsigned;
-                            n->elem_size = tag_table[ti].members[mi].elem_size;
-                            break;
+                if (!(left && left->kind == AST_CALL)) {
+                    int ti, mi;
+                    for (ti = 0; ti < tag_count && n->ival == 0; ti++) {
+                        for (mi = 0; mi < tag_table[ti].member_count; mi++) {
+                            if (strcmp(tag_table[ti].members[mi].name, n->member_name) == 0) {
+                                n->ival = tag_table[ti].members[mi].offset;
+                                n->type_size = tag_table[ti].members[mi].size;
+                                n->is_unsigned = tag_table[ti].members[mi].is_unsigned;
+                                n->elem_size = tag_table[ti].members[mi].elem_size;
+                                break;
+                            }
                         }
                     }
                 }
@@ -621,7 +626,8 @@ static AstNode *parse_postfix(Parser *p) {
                     }
                 }
             }
-            /* 回退：仅当未确认 struct 类型时遍历所有 struct */
+            /* 回退：搜索所有 struct 类型（用于 pvar_find_tag 失败的场景，
+             * 如 struct 类型作为函数参数时的成员访问） */
             if (!struct_found) {
                 if (n->ival == 0) {
                     int ti, mi;
@@ -646,8 +652,8 @@ static AstNode *parse_postfix(Parser *p) {
                             if (strcmp(tag_table[ti].members[mi].name, n->member_name) == 0) {
                                 n->ival = tag_table[ti].members[mi].offset;
                                 n->type_size = tag_table[ti].members[mi].size;
-                            n->is_unsigned = tag_table[ti].members[mi].is_unsigned;
-                            n->elem_size = tag_table[ti].members[mi].elem_size;
+                                n->is_unsigned = tag_table[ti].members[mi].is_unsigned;
+                                n->elem_size = tag_table[ti].members[mi].elem_size;
                                 break;
                             }
                         }
@@ -1350,6 +1356,8 @@ static int parse_init_list(Parser *p, InitItem *items, int max, int *elem_count)
 
 int parse_type_specifier(Parser *p) {
     Token t = peek(p);
+    /* 每次调用时清除 struct tag（非 struct 类型不会设置它） */
+    last_struct_tag = NULL;
     /* 检查 typedef 名（先提取词素，t.start 不是 null 终止的） */
     if (t.kind == TOK_IDENT) {
         char tname[128];
@@ -1360,6 +1368,9 @@ int parse_type_specifier(Parser *p) {
             if (strcmp(typedef_table[ti].name, tname) == 0) {
                 consume(p);
                 last_type_is_unsigned = typedef_table[ti].is_unsigned;
+                /* 记录 struct 标签（匿名 struct typedef 的 tag 就是 typedef 名） */
+                if (typedef_table[ti].member_count > 0)
+                    last_struct_tag = typedef_table[ti].name;
                 return typedef_table[ti].size;
             }
         }
@@ -1379,6 +1390,8 @@ int parse_type_specifier(Parser *p) {
         last_type_is_unsigned = 0; consume(p);
         StructType st;
         int sz = parse_struct_type(p, &st);
+        if (st.tag && st.member_count > 0)
+            last_struct_tag = st.tag;
         return sz > 0 ? sz : 4;
     }
     case TOK_ENUM: {
