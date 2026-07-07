@@ -10,7 +10,7 @@
 │   ├── tcc_rt.c        # 独立运行时（syscall 包装、malloc、printf）
 │   ├── tcc_rt_start.S  # 启动汇编 __tlibc_start → main → exit
 │   ├── lex.c           # 词法分析
-│   ├── parse.c         # 递归下降解析
+│   ├── parse.c         # 递归下降解析（⚠️ 已含 #include "tcc.h"，Makefile 旧规则依然保留）
 │   ├── preproc.c       # 预处理器（宏展开、#include、条件编译）
 │   ├── cgen.c          # 代码生成（函数、流程控制）
 │   ├── cgen_expr.c     # 表达式代码生成
@@ -24,11 +24,13 @@
 │   ├── tcc_need.h      # 最小化类型/常量/系统调用宏/函数声明
 │   └── elf.h           # ELF64 结构体定义
 ├── compiler-tests/     # 测试文件
-│   ├── *.c             # 常规测试（tcc 编译 + 运行时链接，27 个）
-│   ├── selfhost/       # 自举测试（tcc 编译，无运行时依赖，12 个）
-│   └── source/         # 源文件独立测试（验证单个 .c 文件的逻辑，8 个）
+│   ├── *.c             # 常规测试（tcc 编译 + 运行时链接，28 个）
+│   ├── selfhost/       # 自举测试（tcc 编译，无运行时依赖，16 个，01-16）
+│   └── source/         # 源文件独立测试（验证单个 .c 文件的逻辑，9 个）
 ├── ld.script           # 链接脚本
-└── Makefile            # 构建系统
+├── Makefile            # 构建系统
+├── build_self.sh       # （旧版）自举构建脚本
+└── bootstrap-selfhost.sh  # 自举自托管测试脚本（推荐）
 ```
 
 ## 构建
@@ -41,14 +43,54 @@ make test-source                  # 源文件独立测试（compiler-tests/sourc
 make test-source SCTEST_USE_TCC=1  # ↑ 同上，但改用 build/tcc 编译（自举验证）
                                   # 日志在 tmp/test_source_*.log（运行、编译、链接）
 make test-selfhost # 自举测试（tcc 独自编译，不依赖运行时对象）
+./bootstrap-selfhost.sh  # 自举自托管测试：tcc 编译自身 → stage-2 tcc → 测试 selfhost
 make clean
 ```
 
-输出在 `build/`：
-- `build/tcc` — C 编译器
-- `build/tpp` — 预处理器
-- `build/tas` — x86_64 汇编器
-- `build/*.o` — 运行时对象（测试链接用）
+## 输出
+
+```
+build/
+├── tcc            # C 编译器（stage-1，gcc 构建）
+├── tcc-stage2     # C 编译器（stage-2，tcc 自编译，由 bootstrap-selfhost.sh 产生）
+├── tpp            # 预处理器
+├── tas            # x86_64 汇编器
+├── stage2/        # stage-2 tcc 的目标文件
+└── *.o            # 运行时对象（测试链接用）
+```
+
+## 自举自托管测试（bootstrap-selfhost.sh）
+
+三步流程，一次性验证 tcc 的自举能力：
+
+1. **构建 stage-1**：gcc 编译 tcc → `build/tcc`
+2. **构建 stage-2**：stage-1 tcc 编译 tcc 自身 9 个 `.c` 源文件 → `ld` 链接 → `build/tcc-stage2`
+   - 注意：`tcc_rt_start.S` 是汇编，用 gcc 编译；`tpp`/`tas` 是独立工具，不参与链接
+3. **测试 stage-2**：stage-2 tcc 逐一编译→链接→运行 16 个 selfhost 测试
+
+所有日志输出到 `tmp/`：
+- `tmp/stage2_compile_*.log` — stage-2 各模块编译日志
+- `tmp/stage2_link.log` — stage-2 链接日志
+- `tmp/stage2_selfhost/*.log` — 每个 selfhost 测试的编译/链接/运行日志
+
+## 当前状态（2026-07-07）
+
+### 测试通过率
+
+| 测试套件 | 通过 / 总数 | 状态 |
+|----------|-------------|------|
+| `make test`（常规） | 28/28 | ✅ |
+| `make test-source`（gcc 编译） | 9/9 | ✅ |
+| `make test-source SCTEST_USE_TCC=1`（tcc 编译） | — | ⏳ 待验证 |
+| `make test-selfhost`（stage-1 tcc） | 16/16 | ✅ |
+| `bootstrap-selfhost.sh`（stage-2 tcc） | 0/16 | ❌ |
+
+### 自举进展
+
+- stage-1 tcc（gcc 构建）已能正确编译全部 16 个 selfhost 测试 ✅
+- stage-2 tcc（stage-1 自编译）能成功生成可执行二进制 ✅
+- stage-2 tcc 生成的 .o 文件存在链接问题（TLS 重定位错误）和运行崩溃 ❌
+- 主要卡点：stage-1 编译自身时产生的代码生成缺陷（segfault 在 lexer 解析阶段）
 
 ## 设计原则
 
@@ -59,7 +101,7 @@ make clean
 
 ## 目标
 
-让 tcc 能完整编译自身。
+让 tcc 能完整编译自身（完整自举：stage-2 tcc 能通过全部 selfhost 测试）。
 
 ## 已知限制（编写 selfhost 测试必读）
 
@@ -82,6 +124,7 @@ tcc 尚未完备实现 C 标准。编写自举测试（`compiler-tests/selfhost/
 |------|------|
 | **指针嵌套解引用** | `*(p+1)` 中的 `p+1` 不是直接变量引用，代码生成器查不到 `elem_size` 和 `elem_is_unsigned`，解引用会按默认 1 字节处理。**始终用 `p[i]` 下标语法** |
 | **struct 标签解析顺序** | 前向引用的 struct 可能在布局计算时尚未注册，导致成员偏移计算失败 |
+| **强制类型转换解引用存储宽度** | `*(short *)ptr = val` 可能按 1 字节存储（解析器丢弃类型信息 × 代码生成查不到 elem_size） | 确保转换后的类型信息被传播到内部表达式的 elem_size |
 
 ### 📝 语法/语义不支持
 
@@ -135,4 +178,4 @@ void __tlibc_start(void) {
 2. 负数与符号扩展（02）
 3. 变参调用（03）
 4. 无符号类型语义（04）
-5. 复杂表达式和指针运算
+5. 复杂表达式、指针运算（05-16）
