@@ -2561,6 +2561,31 @@ AstNode *parse_program(Parser *p) {
                         }
                     }
                     typedef_count++;
+                } else if (last_struct_member_count > 0 && tsz > 0) {
+                    /* 重复的 struct typedef（前向声明 + 完整定义模式）：
+                     * 用真实 body 的大小和成员覆盖前向声明的占位值 */
+                    TypedefEntry *te = &typedef_table[ti];
+                    te->size = tptr_level > 0 ? 8 : tsz;
+                    te->type_kind = 1;
+                    te->member_count = last_struct_member_count;
+                    te->ptr_level = tptr_level;
+                    te->points_to = tptr_level > 0 ? tsz : 0;
+                    {
+                        int mi;
+                        for (mi = 0; mi < last_struct_member_count && mi < MAX_MEMBERS; mi++)
+                            te->members[mi] = last_struct_members[mi];
+                    }
+                    /* 更新 tag_table 中的对应条目（如果存在） */
+                    {
+                        StructType *st = find_struct_tag(tname);
+                        if (st) {
+                            st->total_size = tsz;
+                            st->member_count = last_struct_member_count;
+                            int mi;
+                            for (mi = 0; mi < last_struct_member_count && mi < MAX_MEMBERS; mi++)
+                                st->members[mi] = last_struct_members[mi];
+                        }
+                    }
                 }
             }
             expect(p, TOK_SEMI);
