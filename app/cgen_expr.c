@@ -1862,11 +1862,8 @@ void cgen_expr(AstNode *node) {
 
                 /* --- 寄存器路径（gp_offset < 48）--- */
                 e1(0x48); e1(0x8B); e1(0x47); e1(0x10); /* mov rax, [rdi+0x10] — reg_save_area */
-                if (type_size >= 8) {
-                    e1(0x48); e1(0x8B); e1(0x04); e1(0x08); /* mov rax, [rax+rcx]（64 位） */
-                } else {
-                    e1(0x8B); e1(0x04); e1(0x08);            /* mov eax, [rax+rcx]（32 位） */
-                }
+                /* 始终用 64 位加载：x86-64 ABI 的所有变参槽都是 8 字节 */
+                e1(0x48); e1(0x8B); e1(0x04); e1(0x08); /* mov rax, [rax+rcx]（64 位） */
                 e1(0x83); e1(0x07); e1(8);          /* add dword [rdi], 8 — gp_offset += 8 */
                 int _jmp_pos = code_size;
                 e1(0xEB);                           /* jmp rel8 → done */
@@ -1876,14 +1873,10 @@ void cgen_expr(AstNode *node) {
                 /* --- Overflow 路径（gp_offset >= 48）--- */
                 code_buf[_jge_ofs] = code_size - _jge_ofs - 1;
                 e1(0x48); e1(0x8B); e1(0x47); e1(0x08); /* mov rax, [rdi+0x08] — overflow_arg_area */
-                if (type_size >= 8) {
-                    e1(0x48); e1(0x8B); e1(0x00);        /* mov rax, [rax]（64 位） */
-                } else {
-                    e1(0x8B); e1(0x00);                   /* mov eax, [rax]（32 位） */
-                }
+                /* 同样始终用 64 位加载 */
+                e1(0x48); e1(0x8B); e1(0x00);        /* mov rax, [rax]（64 位） */
                 /* overflow_arg_area += 8（栈槽一直是 8 字节） */
                 e1(0x48); e1(0x83); e1(0x47); e1(0x08); e1(0x08);
-
                 code_buf[_jmp_ofs] = code_size - _jmp_ofs - 1;
                 break;
             }

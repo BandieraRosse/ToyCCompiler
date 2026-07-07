@@ -1486,10 +1486,26 @@ int parse_type_specifier(Parser *p) {
     case TOK_STRUCT:
     case TOK_UNION: {
         last_type_is_unsigned = 0; consume(p);
+        /* 提前获取 struct 标签名（用于 total_size 回退，绕过 stage-2
+         * 中 *out = *existing 大结构体拷贝导致 total_size 丢失的 bug） */
+        const char *_tag_fb = NULL;
+        {   Token _nt = peek(p);
+            if (_nt.kind == TOK_IDENT) {
+                int _nl = _nt.len < 127 ? _nt.len : 127;
+                char *_tn = arena_alloc(p->arena, _nl + 1);
+                int _ci; for (_ci = 0; _ci < _nl; _ci++) _tn[_ci] = _nt.start[_ci]; _tn[_nl] = '\0';
+                _tag_fb = _tn;
+            }
+        }
         StructType st;
         int sz = parse_struct_type(p, &st);
         if (st.member_count > 0)
             last_struct_tag = st.tag ? st.tag : "";
+        /* 回退：struct 拷贝丢失了 total_size，直接从 tag_table 取 */
+        if (sz <= 0 && _tag_fb) {
+            StructType *_ex = find_struct_tag(_tag_fb);
+            if (_ex && _ex->total_size > 0) sz = _ex->total_size;
+        }
         return sz > 0 ? sz : 4;
     }
     case TOK_ENUM: {
