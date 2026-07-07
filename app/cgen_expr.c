@@ -287,6 +287,8 @@ void cgen_addr(AstNode *node) {
                         if (syms[i].name && strcmp(syms[i].name, node->left->name) == 0) {
                             if (i < MAX_SYMS && global_elem_size[i] > 0)
                                 elem_size = global_elem_size[i];
+                            else if (i < MAX_SYMS && global_ptr_elem_size[i] > 0)
+                                elem_size = global_ptr_elem_size[i];
                             break;
                         }
                     }
@@ -561,8 +563,15 @@ void cgen_expr(AstNode *node) {
                     /* 数组/大结构体：数组→指针衰减（lea rax, [rip + disp32]） */
                     e1(0x48); e1(0x8D); e1(0x05);
                     node->type_size = 8;
+                    /* 传播数组元素大小供下标/解引用使用 */
+                    if (si < MAX_SYMS && global_elem_size[si] > 0)
+                        node->elem_size = global_elem_size[si];
                 } else if (gsz == 8) {
                     e1(0x48); e1(0x8B); e1(0x05);  /* mov rax, [rip + disp32] */
+                    node->type_size = 8;  /* 全局指针变量：传播 type_size=8 供指针算术检测 */
+                    /* 传播指针变量的元素大小供下标使用（int*→4, long*→8） */
+                    if (si < MAX_SYMS && global_ptr_elem_size[si] > 0)
+                        node->elem_size = global_ptr_elem_size[si];
                 } else {
                     e1(0x8B); e1(0x05);             /* mov eax, [rip + disp32] */
                 }
@@ -607,9 +616,13 @@ void cgen_expr(AstNode *node) {
                 if (i < 0) {
                     for (i = 0; i < sym_count; i++) {
                         if (syms[i].name && strcmp(syms[i].name, node->left->name) == 0) {
-                            if (i < MAX_SYMS && global_elem_size[i] > 0) {
-                                elem_size = global_elem_size[i];
-                                elem_unsigned = global_elem_unsigned[i];
+                            if (i < MAX_SYMS) {
+                                if (global_elem_size[i] > 0) {
+                                    elem_size = global_elem_size[i];
+                                    elem_unsigned = global_elem_unsigned[i];
+                                } else if (global_ptr_elem_size[i] > 0) {
+                                    elem_size = global_ptr_elem_size[i];
+                                }
                             }
                             break;
                         }
@@ -906,6 +919,22 @@ void cgen_expr(AstNode *node) {
                         if (locals[vi].element_size > 0) ptelem = locals[vi].element_size;
 
                 }
+                /* 全局变量 fallback：SEARCH_LOCAL 未找到时查符号表 */
+                if (vi < 0) {
+                    for (vi = 0; vi < sym_count; vi++) {
+                        if (syms[vi].name && strcmp(syms[vi].name, ptr_node->name) == 0) {
+                            if (vi < MAX_SYMS && global_elem_size[vi] > 0)
+                                ptelem = global_elem_size[vi];
+                            else if (vi < MAX_SYMS && global_ptr_elem_size[vi] > 0)
+                                ptelem = global_ptr_elem_size[vi];
+                            break;
+                        }
+                    }
+                }
+            }
+            /* 非 AST_VAR 指针表达式 fallback（如 AST_MEMBER、AST_BINOP 结果） */
+            if (ptelem == 1 && ptr_node && ptr_node->elem_size > 0) {
+                ptelem = ptr_node->elem_size;
             }
             if (ptelem > 1) {
                 /* 缩放整数操作数（此后由下方 binop_add64/binop_sub... 完成加法） */
@@ -1034,6 +1063,15 @@ void cgen_expr(AstNode *node) {
             }
         }
 
+        /* 指针算术结果传播 elem_size（供后续 DEREF 解引用宽度使用） */
+        if ((node->op == TOK_PLUS || node->op == TOK_MINUS) &&
+            node->left && node->right &&
+            ((node->left->type_size == 8 && node->right->type_size <= 4) ||
+             (node->right->type_size == 8 && node->left->type_size <= 4))) {
+            AstNode *ptr_node = (node->left->type_size == 8) ? node->left : node->right;
+            node->elem_size = ptr_node->elem_size > 0 ? ptr_node->elem_size : 1;
+        }
+
         /* 指针减法：q-p 结果需要除以元素大小（以元素个数为单位的差值） */
         if (node->op == TOK_MINUS &&
             node->left && node->left->type_size == 8 &&
@@ -1047,6 +1085,22 @@ void cgen_expr(AstNode *node) {
                         if (locals[vi].element_size > 0) ptelem = locals[vi].element_size;
 
                 }
+                /* 全局变量 fallback */
+                if (vi < 0) {
+                    for (vi = 0; vi < sym_count; vi++) {
+                        if (syms[vi].name && strcmp(syms[vi].name, node->left->name) == 0) {
+                            if (vi < MAX_SYMS && global_elem_size[vi] > 0)
+                                ptelem = global_elem_size[vi];
+                            else if (vi < MAX_SYMS && global_ptr_elem_size[vi] > 0)
+                                ptelem = global_ptr_elem_size[vi];
+                            break;
+                        }
+                    }
+                }
+            }
+            /* 非 AST_VAR 指针表达式 fallback */
+            if (ptelem == 1 && node->left->elem_size > 0) {
+                ptelem = node->left->elem_size;
             }
             if (ptelem > 1) {
                 /* 用 imul 取倒数不可行，用 idiv：eax 中已有差值，除以 ptelem */
@@ -1258,6 +1312,8 @@ void cgen_expr(AstNode *node) {
                         if (syms[i].name && strcmp(syms[i].name, arr_base->name) == 0) {
                             if (i < MAX_SYMS && global_elem_size[i] > 0)
                                 elem_size = global_elem_size[i];
+                            else if (i < MAX_SYMS && global_ptr_elem_size[i] > 0)
+                                elem_size = global_ptr_elem_size[i];
                             break;
                         }
                     }

@@ -242,6 +242,7 @@ static void emit_epilogue(void) {
 
 /* 全局变量的元素大小（供数组下标运算确定偏移量） */
 int global_elem_size[MAX_SYMS];
+int global_ptr_elem_size[MAX_SYMS];  /* 全局指针变量的元素大小（int*→4, long*→8） */
 int global_base_elem_size[MAX_SYMS];
 int global_elem_is_ptr_arr[MAX_SYMS];
 int global_elem_unsigned[MAX_SYMS];
@@ -321,6 +322,7 @@ static void collect_locals(AstNode *node) {
                 s->shndx = 5;  /* .bss (section index 5: 1-text 2-rela.text 3-data 4-rela.data 5-bss) */
                 s->sym_idx = -1;
                 global_elem_size[sym_count] = (vsize > 8) ? node->elem_size : 0;
+                global_ptr_elem_size[sym_count] = (vsize == 8 && node->elem_size > 0) ? node->elem_size : 0;
                 global_base_elem_size[sym_count] = node->base_elem_size;
                 global_elem_is_ptr_arr[sym_count] = node->elem_is_ptr;
                 global_elem_unsigned[sym_count] = node->elem_is_unsigned;
@@ -1190,6 +1192,7 @@ void cgen_program(AstNode *prog) {
                 s->offset = off_val;
                 s->shndx = shndx_val;
                 global_elem_size[si] = (vsize > 8) ? node->elem_size : 0;
+                global_ptr_elem_size[si] = (vsize == 8 && node->elem_size > 0) ? node->elem_size : 0;
                 global_base_elem_size[si] = node->base_elem_size;
                 global_elem_is_ptr_arr[si] = node->elem_is_ptr;
                 global_elem_unsigned[si] = node->elem_is_unsigned;

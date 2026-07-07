@@ -305,6 +305,7 @@ extern int strtab_len;
 
 /* 全局变量的元素大小（数组下标运算用） */
 extern int global_elem_size[MAX_SYMS];
+extern int global_ptr_elem_size[MAX_SYMS];  /* 全局指针变量的元素大小（int*→4, long*→8） */
 extern int global_base_elem_size[MAX_SYMS];
 extern int global_elem_is_ptr_arr[MAX_SYMS];
 extern int global_elem_unsigned[MAX_SYMS];
