@@ -2829,6 +2829,9 @@ AstNode *parse_program(Parser *p) {
                         gvar->ival = gv_total;
                         gvar->type_size = gv_total;
                         gvar->elem_size = (gv_arr_len > 1) ? gv_unit : 0;
+                        gvar->base_elem_size = (gv_ptrs == 1 && gv_bracket_count > 0)
+                            ? (typesize > 0 ? typesize : 4) : gv_unit;
+                        gvar->elem_is_ptr = (gv_ptrs > 0 && gv_bracket_count > 0) ? 1 : 0;
                         *tail = gvar;
                         tail = &gvar->next;
                     }

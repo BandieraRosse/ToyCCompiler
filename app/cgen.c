@@ -340,9 +340,11 @@ static void collect_locals(AstNode *node) {
             locals[local_count].scope_depth = scope_depth;
             locals[local_count].scope_id = scope_chain_count > 0 ? scope_chain[scope_chain_count - 1] : 0;
             locals[local_count].elem_is_unsigned = node->elem_is_unsigned;
-            /* 判断是否为数组：type_size 不等于指针大小(8)且 ival 为正数 */
+            /* 判断是否为数组：对指针数组（char *p[1]）type_size==8 且 ival==8
+             * 与裸指针无法区分，需额外检查 elem_is_ptr。对非指针数组用
+             * type_size!=8 || ival>8 即可。 */
             locals[local_count].is_array =
-                (node->type_size != 8 || node->ival > 8) && node->ival > 0 &&
+                (node->type_size != 8 || node->ival > 8 || node->elem_is_ptr) && node->ival > 0 &&
                 node->elem_size > 0;
             local_count++;
         }

@@ -620,23 +620,22 @@ void cgen_expr(AstNode *node) {
                 int i;
                 SEARCH_LOCAL(i, node->left->left->name);
                 if (i >= 0) {
-                        if (locals[i].base_elem_size > 0) {
+                        if (locals[i].base_elem_size > 0)
                             elem_size = locals[i].base_elem_size;
-                        } else if (locals[i].element_size > 0) {
+                        else if (locals[i].element_size > 0)
                             elem_size = locals[i].element_size;
-                        }
 
                 }
                 if (i < 0) {
                     for (i = 0; i < sym_count; i++) {
                         if (syms[i].name && strcmp(syms[i].name, node->left->left->name) == 0) {
-                            if (i < MAX_SYMS && global_base_elem_size[i] > 0)
-                                elem_size = global_base_elem_size[i];
+                            if (i < MAX_SYMS) {
+                                if (global_base_elem_size[i] > 0)
+                                    elem_size = global_base_elem_size[i];
+                            }
                             break;
                         }
                     }
-                    /* 若未在上层查找到（struct 成员数组 s.arr[i][j]），
-                     * 或查找到但没有 base_elem_size，保持默认 1 */
                 }
             }
             /* fallback: 结构体成员数组 s.arr[i] — 使用 AST_MEMBER 上的 elem_size */
@@ -734,6 +733,18 @@ void cgen_expr(AstNode *node) {
                 node->type_size = elem_size;
             }
             node->is_unsigned = elem_unsigned;
+            /* 传播结果类型的"解引用宽度"供 *expr 加载时确定宽度。
+             * 对于 a[i] 结果是指针的场景（如 int *ptrs[3] → ptrs[i] 是指针），
+             * *ptrs[i] 的加载宽度是 base_elem_size（int → 4 字节）而非 elem_size
+             *（指针本身 8 字节）。对子数组也一样。 */
+            node->elem_size = elem_size;  /* default: the loaded value IS the data */
+            if (node->left && node->left->kind == AST_VAR && node->left->name) {
+                int _di; SEARCH_LOCAL(_di, node->left->name);
+                if (_di >= 0 && (locals[_di].elem_is_ptr || is_subarray)
+                    && locals[_di].base_elem_size > 0) {
+                    node->elem_size = locals[_di].base_elem_size;
+                }
+            }
             break;
         }
 
