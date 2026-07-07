@@ -409,6 +409,11 @@ static inline int get_func_ret_size(const char *name) {
     return 0;
 }
 
+/* 解析期记录的函数返回类型表（原型 + 定义的超集） */
+extern const char *parsed_func_ret_names[MAX_FUNC_RET_TYPES];
+extern int parsed_func_ret_sizes[MAX_FUNC_RET_TYPES];
+extern int parsed_func_ret_count;
+
 /* ─── 类型系统（Phase 3） ─── */
 
 #define MAX_MEMBERS 128

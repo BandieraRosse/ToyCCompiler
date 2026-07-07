@@ -2476,6 +2476,7 @@ static AstNode *parse_parameter_list(Parser *p, int *is_variadic) {
 /* ─── 顶层解析入口 ─── */
 
 AstNode *parse_program(Parser *p) {
+    parsed_func_ret_count = 0;  /* 重置解析期返回类型表（每个文件一个编译单元） */
     AstNode *head = NULL;
     AstNode **tail = &head;
 
@@ -2698,6 +2699,13 @@ AstNode *parse_program(Parser *p) {
             AstNode *fparams = parse_parameter_list(p, &is_variadic_f);
             if (peek(p).kind == TOK_SEMI) {
                 /* 函数原型：只声明不定义 */
+                /* 记录返回类型大小供代码生成器使用（跨 TU 函数调用的 hidden pointer 约定） */
+                if (fptr_level == 0 && typesize > 8 && fname &&
+                    parsed_func_ret_count < MAX_FUNC_RET_TYPES) {
+                    parsed_func_ret_names[parsed_func_ret_count] = fname;
+                    parsed_func_ret_sizes[parsed_func_ret_count] = typesize;
+                    parsed_func_ret_count++;
+                }
                 consume(p);
             } else if (peek(p).kind == TOK_EQ) {
                 /* 函数指针变量带初始化器：int (*f)(args) = value; */

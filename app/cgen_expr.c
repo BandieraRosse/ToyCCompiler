@@ -1622,10 +1622,22 @@ void cgen_expr(AstNode *node) {
 
         /* 检查被调函数是否返回大结构体（>8 字节），需要传递隐藏指针 */
         int has_hidden_ret = 0;
+        int hidden_ret_size = 0;
         int hidden_alloc_size = 0;
         if (node->name && !is_fptr) {
             int rsz = get_func_ret_size(node->name);
-            if (rsz > 8) has_hidden_ret = 1;
+            /* fallback: 解析期记录的原型返回类型（跨 TU 函数，非本文件定义的函数） */
+            if (rsz == 0) {
+                int pi;
+                for (pi = 0; pi < parsed_func_ret_count; pi++) {
+                    if (parsed_func_ret_names[pi] &&
+                        strcmp(parsed_func_ret_names[pi], node->name) == 0) {
+                        rsz = parsed_func_ret_sizes[pi];
+                        break;
+                    }
+                }
+            }
+            if (rsz > 8) { has_hidden_ret = 1; hidden_ret_size = rsz; }
         }
 
         /* 求值参数：float 用 push_xmm0，int 用 push_rax
@@ -1672,7 +1684,7 @@ void cgen_expr(AstNode *node) {
         }
         /* Phase 3: 大结构体返回值 — 先分配返回空间并压入隐藏指针（沉到栈底，最后 pop 到 RDI） */
         if (has_hidden_ret) {
-            int rsz = get_func_ret_size(node->name);
+            int rsz = hidden_ret_size;
             hidden_alloc_size = (rsz + 15) & -16;
             if (hidden_alloc_size <= 127) {
                 e1(0x48); e1(0x83); e1(0xEC); e1(hidden_alloc_size);
