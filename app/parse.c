@@ -2139,7 +2139,9 @@ AstNode *parse_compound_statement(Parser *p) {
                             pvar_set_struct_type(cname, resolve_struct_type(saved_struct_tag));
                     }
                     /* 处理数组后缀 */
+                    int comma_was_bracket = 0;
                     while (peek(p).kind == TOK_LBRACKET) {
+                        comma_was_bracket = 1;
                         consume(p);
                         if (peek(p).kind == TOK_NUMBER && peek(p).ival > 0) {
                             cdecl->ival *= peek(p).ival;
@@ -2153,7 +2155,7 @@ AstNode *parse_compound_statement(Parser *p) {
                         }
                         if (peek(p).kind == TOK_RBRACKET) consume(p);
                     }
-                    if (cdecl->ival > 4 && cdecl->elem_size > 0)
+                    if (comma_was_bracket && cdecl->elem_size > 0)
                         cdecl->is_array = 1;
                     /* 数组处理后更新 pvar 中的变量大小 */
                     if (cname && *cname && cdecl->ival > 4) {
@@ -2838,7 +2840,7 @@ AstNode *parse_program(Parser *p) {
                         gvar->base_elem_size = (gv_ptrs == 1 && gv_bracket_count > 0)
                             ? (typesize > 0 ? typesize : 4) : gv_unit;
                         gvar->elem_is_ptr = (gv_ptrs > 0 && gv_bracket_count > 0) ? 1 : 0;
-                        gvar->is_array = (gv_arr_len > 1) ? 1 : 0;
+                        gvar->is_array = (gv_bracket_count > 0) ? 1 : 0;  /* int arr[1] 也能正确标记 */
                         gvar->elem_is_unsigned = (gv_ptrs > 0 || gv_bracket_count > 0) ? last_type_is_unsigned : 0;
                         *tail = gvar;
                         tail = &gvar->next;

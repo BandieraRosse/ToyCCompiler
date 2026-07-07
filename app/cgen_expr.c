@@ -935,6 +935,9 @@ void cgen_expr(AstNode *node) {
             if (ptelem == 1 && ptr_node && ptr_node->elem_size > 0) {
                 ptelem = ptr_node->elem_size;
             }
+            /* 将元素大小回写到指针节点，供 *(p+N) 解引用时确定加载宽度 */
+            if (ptr_node && ptelem > 0)
+                ptr_node->elem_size = ptelem;
             if (ptelem > 1) {
                 /* 缩放整数操作数（此后由下方 binop_add64/binop_sub... 完成加法） */
                 if (right_is_ptr) {

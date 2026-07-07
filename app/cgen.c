@@ -346,12 +346,12 @@ static void collect_locals(AstNode *node) {
             locals[local_count].scope_depth = scope_depth;
             locals[local_count].scope_id = scope_chain_count > 0 ? scope_chain[scope_chain_count - 1] : 0;
             locals[local_count].elem_is_unsigned = node->elem_is_unsigned;
-            /* 判断是否为数组：对指针数组（char *p[1]）type_size==8 且 ival==8
-             * 与裸指针无法区分，需额外检查 elem_is_ptr。对非指针数组用
-             * type_size!=8 || ival>8 即可。 */
-            locals[local_count].is_array =
-                (node->type_size != 8 || node->ival > 8 || node->elem_is_ptr) && node->ival > 0 &&
-                node->elem_size > 0;
+            /* 数组判定：用解析器标记的 is_array（覆盖所有数组，包括
+             * ≤8 字节的 int[2]、char[8]、short[4] 等）。回退 heuristic
+             * 仅用于解析器未标记的罕见边界情况。 */
+            locals[local_count].is_array = node->is_array ? 1 :
+                ((node->type_size != 8 || node->ival > 8 || node->elem_is_ptr) && node->ival > 0 &&
+                 node->elem_size > 0);
             local_count++;
         }
         break;
