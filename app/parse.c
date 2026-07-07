@@ -2419,22 +2419,10 @@ static AstNode *parse_parameter_list(Parser *p, int *is_variadic) {
     consume(p);  /* 跳过 '(' */
     AstNode *head = NULL;
     AstNode **tail = &head;
-    if (peek(p).kind == TOK_VOID) {
-        /* 仅 void 单独作为参数时（无名称）才消耗 */
-        Lexer save_lx = *p->lexer;
-        Token save_tok = p->tok;
+
+    /* 空参数列表函数声明 f() */
+    if (peek(p).kind == TOK_RPAREN) {
         consume(p);
-        if (peek(p).kind == TOK_RPAREN || peek(p).kind == TOK_COMMA) {
-            /* void 单独：空参数列表 */
-            expect(p, TOK_RPAREN);
-            return head;
-        }
-        /* void name 或 void *name — 回退，当作正常类型处理 */
-        *p->lexer = save_lx;
-        p->tok = save_tok;
-    } else if (peek(p).kind == TOK_RPAREN) {
-        /* 空参数列表 */
-        expect(p, TOK_RPAREN);
         return head;
     }
 
@@ -2447,8 +2435,30 @@ static AstNode *parse_parameter_list(Parser *p, int *is_variadic) {
         /* 跳过限定符 */
         while (peek(p).kind == TOK_CONST || peek(p).kind == TOK_VOLATILE ||
                peek(p).kind == TOK_RESTRICT) consume(p);
-        int param_is_double = (peek(p).kind == TOK_DOUBLE);
-        int psz = parse_type_specifier(p);
+
+        int param_is_double = 0;
+        int psz = 0;
+
+        if (peek(p).kind == TOK_VOID) {
+            /* 注意：不能做 Lexer save/restore——stage-1 tcc 的 struct copy 有 bug */
+            consume(p);
+            if (peek(p).kind == TOK_RPAREN) {
+                /* f(void) */
+                expect(p, TOK_RPAREN);
+                return head;
+            }
+            if (peek(p).kind == TOK_COMMA) {
+                /* f(void, ...) — 跳过 void */
+                consume(p);
+                continue;
+            }
+            /* void *name 或 void name — psz=0, param_is_double=0 */
+            last_type_is_unsigned = 0;
+        } else {
+            param_is_double = (peek(p).kind == TOK_DOUBLE);
+            psz = parse_type_specifier(p);
+        }
+
         int ptr_level = 0;
         const char *pname = parse_declarator(p, &ptr_level);
         /* [] 在参数中退化为指针，计入有效指针层数 */
