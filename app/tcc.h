@@ -477,6 +477,10 @@ int find_enum_val_ex(const char *name, int *val);
 /* 判断名字是否为 typedef */
 int is_typedef_name(const char *name);
 
+/* 从解析期的 pvar 表查找变量大小和数组元素大小（供 cgen 全局数组衰减使用） */
+int pvar_lookup_size(const char *name);
+int pvar_lookup_elem_size(const char *name);
+
 /* 查找 struct 标签 */
 StructType *find_struct_tag(const char *tag);
 
@@ -492,6 +496,7 @@ char *preprocess(const char *src, int len, const char *fname, int *out_len);
 void cgen_init(void);
 void cgen_program(AstNode *prog);
 void cgen_expr(AstNode *node);
+void cgen_addr(AstNode *node);
 void cgen_asm(AstNode *node);
 
 /* ─── ELF 写入 ─── */

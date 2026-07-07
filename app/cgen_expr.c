@@ -226,7 +226,7 @@ static void emit_call(const char *name) {
 /* ─── 左值地址计算（用于 ++/--） ─── */
 
 /* 计算左值的内存地址到 rax 中，支持 AST_VAR、AST_MEMBER、*ptr */
-static void cgen_addr(AstNode *node) {
+void cgen_addr(AstNode *node) {
     if (!node) return;
 
     switch (node->kind) {
@@ -538,6 +538,17 @@ void cgen_expr(AstNode *node) {
                 s->is_func = 0;
                 s->shndx = 0;  /* SHN_UNDEF — 外部符号 */
                 s->sym_idx = -1;
+                /* 从 pvar 表查询数组元素大小（extern 数组如 elf_code_buf
+                 * 在 parse 阶段已注册正确大小但未创建 AST_VAR_DECL，
+                 * 此处补上 global_elem_size 使 is_global_arr 检测生效）。 */
+                if (si < MAX_SYMS) {
+                    int _psz = pvar_lookup_size(node->name);
+                    int _pesz = pvar_lookup_elem_size(node->name);
+                    if (_psz > 8 && _pesz > 0) {
+                        global_elem_size[si] = _pesz;
+                        syms[si].size = _psz;
+                    }
+                }
             }
             if (si >= 0) {
                 /* 全局变量：使用符号表记录的大小确定加载宽度 */
@@ -1359,6 +1370,26 @@ void cgen_expr(AstNode *node) {
                 e1(0x89); e1(0x01);             /* mov [rcx], eax */
             }
             break;
+        }
+
+        /* 大结构体赋值给 >8 字节局部变量：用 cgen_addr 获取 RHS 的源地址，
+         * 避免 cgen_expr 对 *ptr 解引用时的加载语义错误。与 cgen.c AST_VAR_DECL
+         * 中的修复同理。 */
+        if (node->left && node->left->kind == AST_VAR) {
+            int _vi;
+            SEARCH_LOCAL(_vi, node->left->name);
+            if (_vi >= 0 && locals[_vi].size > 8) {
+                cgen_addr(node->right);            /* rax = 源地址 */
+                e1(0x48); e1(0x89); e1(0xC6);     /* mov rsi, rax */
+                if (disp8_fits(locals[_vi].offset))
+                    { e1(0x48); e1(0x8D); e1(0x7D); e1(locals[_vi].offset & 0xFF); }
+                else
+                    { e1(0x48); e1(0x8D); e1(0xBD); e4(locals[_vi].offset); }
+                e1(0xB9); e4(locals[_vi].size);     /* mov ecx, size */
+                e1(0xF3); e1(0xA4);                /* rep movsb */
+                node->type_size = locals[_vi].size;
+                break;
+            }
         }
 
         cgen_expr(node->right);

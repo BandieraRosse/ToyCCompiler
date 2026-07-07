@@ -93,6 +93,8 @@ static int pvar_find_size(const char *name) {
     }
     return 0;
 }
+int pvar_lookup_size(const char *name) { return pvar_find_size(name); }
+int pvar_lookup_elem_size(const char *name) { return pvar_find_elem_size(name); }
 static int pvar_find_float(const char *name) {
     int i;
     for (i = pvar_count - 1; i >= 0; i--)

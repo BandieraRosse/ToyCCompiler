@@ -737,10 +737,25 @@ static void cgen_stmt(AstNode *stmt) {
                 for (e = stmt->expr; e; e = e->next)
                     cgen_expr(e);
             } else {
-                cgen_expr(stmt->expr);
-                int i;
-                SEARCH_LOCAL(i, stmt->name);
-                if (i >= 0) {
+                /* 大结构体初始化（>8 字节）：用 cgen_addr 获取 RHS 的源地址，
+                 * 避免 cgen_expr 对 *ptr 解引用时的加载语义错误（elem_size>8
+                 * 时 cgen_expr 做 32 位加载而非返回地址）。 */
+                int _vi;
+                SEARCH_LOCAL(_vi, stmt->name);
+                if (_vi >= 0 && locals[_vi].size > 8) {
+                    cgen_addr(stmt->expr);           /* rax = 源地址 */
+                    e1(0x48); e1(0x89); e1(0xC6);  /* mov rsi, rax */
+                    if (disp8_fits(locals[_vi].offset))
+                        { e1(0x48); e1(0x8D); e1(0x7D); e1(locals[_vi].offset & 0xFF); }
+                    else
+                        { e1(0x48); e1(0x8D); e1(0xBD); e4(locals[_vi].offset); }
+                    e1(0xB9); e4(locals[_vi].size);  /* mov ecx, size */
+                    e1(0xF3); e1(0xA4);              /* rep movsb */
+                } else {
+                    cgen_expr(stmt->expr);
+                    int i;
+                    SEARCH_LOCAL(i, stmt->name);
+                    if (i >= 0) {
                         if (locals[i].is_float) {
                             emit1(0xF2); emit1(0x0F); emit1(0x11);
                             emit1(0x45); emit1(locals[i].offset & 0xFF);
@@ -785,7 +800,7 @@ static void cgen_stmt(AstNode *stmt) {
                         } else {
                             store_eax_to_rbp(locals[i].offset);
                         }
-
+                    }
                 }
             }
         }
