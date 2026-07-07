@@ -521,10 +521,12 @@ static void pp_buf_impl(const char *s, int len, OutBuf *out, int depth, int *had
                         {
                             int ai;
                             for (ai = 0; ai < arg_count; ai++) {
-                                while (arg_lens[ai] > 0 && pp_ws(arg_starts[ai][0]))
-                                    { arg_starts[ai]++; arg_lens[ai]--; }
-                                while (arg_lens[ai] > 0 && pp_ws(arg_starts[ai][arg_lens[ai]-1]))
+                                const char *ap = arg_starts[ai];
+                                while (arg_lens[ai] > 0 && pp_ws(ap[0]))
+                                    { ap++; arg_lens[ai]--; }
+                                while (arg_lens[ai] > 0 && pp_ws(ap[arg_lens[ai]-1]))
                                     arg_lens[ai]--;
+                                arg_starts[ai] = ap;
                             }
                         }
                         /* 预展开所有参数（标准 C 语义：参数先展开再替换） */
@@ -595,11 +597,15 @@ static void pp_buf_impl(const char *s, int len, OutBuf *out, int depth, int *had
                                                 for (vi = func_macros[fmi].param_count; vi < arg_count; vi++) {
                                                     if (vi > func_macros[fmi].param_count) out_putc(&temp, ',');
                                                     if (expanded_args[vi]) {
-                                                        int vj; for (vj = 0; vj < expanded_lens[vi]; vj++)
-                                                            out_putc(&temp, expanded_args[vi][vj]);
+                                                        char *ea = expanded_args[vi];
+                                                        int el = expanded_lens[vi];
+                                                        int vj; for (vj = 0; vj < el; vj++)
+                                                            out_putc(&temp, ea[vj]);
                                                     } else {
-                                                        int vj; for (vj = 0; vj < arg_lens[vi]; vj++)
-                                                            out_putc(&temp, (arg_starts[vi])[vj]);
+                                                        const char *as = arg_starts[vi];
+                                                        int al = arg_lens[vi];
+                                                        int vj; for (vj = 0; vj < al; vj++)
+                                                            out_putc(&temp, as[vj]);
                                                     }
                                                 }
                                                 ri = nri + 11; continue;
@@ -619,11 +625,15 @@ static void pp_buf_impl(const char *s, int len, OutBuf *out, int depth, int *had
                                     for (vi = func_macros[fmi].param_count; vi < arg_count; vi++) {
                                         if (vi > func_macros[fmi].param_count) out_putc(&temp, ',');
                                         if (expanded_args[vi]) {
-                                            int vj; for (vj = 0; vj < expanded_lens[vi]; vj++)
-                                                out_putc(&temp, expanded_args[vi][vj]);
+                                            char *ea = expanded_args[vi];
+                                            int el = expanded_lens[vi];
+                                            int vj; for (vj = 0; vj < el; vj++)
+                                                out_putc(&temp, ea[vj]);
                                         } else {
-                                            int vj; for (vj = 0; vj < arg_lens[vi]; vj++)
-                                                out_putc(&temp, (arg_starts[vi])[vj]);
+                                            const char *as = arg_starts[vi];
+                                            int al = arg_lens[vi];
+                                            int vj; for (vj = 0; vj < al; vj++)
+                                                out_putc(&temp, as[vj]);
                                         }
                                     }
                                     continue;
@@ -653,11 +663,15 @@ static void pp_buf_impl(const char *s, int len, OutBuf *out, int depth, int *had
                                         for (jj = 0; jj < ri - rs; jj++) if (pn[jj] != rp[rs+jj]) goto pnm;
                                         if (pn[jj] != '\0') goto pnm;
                                         if (expanded_args[pi]) {
-                                            int vj; for (vj = 0; vj < expanded_lens[pi]; vj++)
-                                                out_putc(&temp, expanded_args[pi][vj]);
+                                            char *ea = expanded_args[pi];
+                                            int el = expanded_lens[pi];
+                                            int vj; for (vj = 0; vj < el; vj++)
+                                                out_putc(&temp, ea[vj]);
                                         } else {
-                                            int vj; for (vj = 0; vj < arg_lens[pi]; vj++)
-                                                out_putc(&temp, (arg_starts[pi])[vj]);
+                                            const char *as = arg_starts[pi];
+                                            int al = arg_lens[pi];
+                                            int vj; for (vj = 0; vj < al; vj++)
+                                                out_putc(&temp, as[vj]);
                                         }
                                         matched = 1;
                                         break;
