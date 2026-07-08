@@ -271,6 +271,59 @@ void __tlibc_start(void) {
     long total = msum.a + msum.b + msum.c;
     if (total != 60) sys_exit(130);
 
+    // === 花括号初始化数组（来自 cgen_expr2.c 补充）===
+
+    // 1) 直接花括号数组
+    {
+        struct Medium arr[] = { make_medium(3, 4, 5) };
+        if (arr[0].a != 3) sys_exit(160);
+        if (arr[0].b != 4) sys_exit(161);
+        if (arr[0].c != 5) sys_exit(162);
+    }
+
+    // 2) 多元素花括号
+    {
+        struct Medium arr2[] = { make_medium(5, 6, 7), make_medium(8, 9, 10) };
+        if (arr2[0].a != 5) sys_exit(170);
+        if (arr2[0].b != 6) sys_exit(171);
+        if (arr2[0].c != 7) sys_exit(172);
+        if (arr2[1].a != 8) sys_exit(173);
+        if (arr2[1].b != 9) sys_exit(174);
+        if (arr2[1].c != 10) sys_exit(175);
+    }
+
+    // 3) 大结构体花括号（>16 字节，hidden pointer ABI）
+    {
+        struct Large quads[] = {
+            make_large(100),
+            make_large(200)
+        };
+        if (quads[0].d0 != 100) sys_exit(180);
+        if (quads[0].df != 115) sys_exit(181);
+        if (quads[1].d0 != 200) sys_exit(182);
+        if (quads[1].df != 215) sys_exit(183);
+    }
+
+    // 4) 小结构体花括号（≤8 字节，RAX 返回）
+    {
+        struct Small sarr[] = { make_small(1), make_small(2) };
+        if (sarr[0].a != 1) sys_exit(190);
+        if (sarr[1].a != 2) sys_exit(191);
+    }
+
+    // 5) 数组元素赋值为结构体返回值
+    {
+        struct Medium arr[2];
+        arr[0] = make_medium(11, 22, 33);
+        arr[1] = make_medium(44, 55, 66);
+        if (arr[0].a != 11) sys_exit(200);
+        if (arr[0].b != 22) sys_exit(201);
+        if (arr[0].c != 33) sys_exit(202);
+        if (arr[1].a != 44) sys_exit(203);
+        if (arr[1].b != 55) sys_exit(204);
+        if (arr[1].c != 66) sys_exit(205);
+    }
+
     // 全部通过
     sys_exit(0);
 }

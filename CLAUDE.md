@@ -1,6 +1,7 @@
-# tcc — Tinylibc C 编译器（独立版）
+# tcc — ToyCCompiler
 
-从 [Tinylibc](https://github.com/WHU-SC7/Tinylibc) 项目中提取的 C 编译器，目标是用自身编译自己（自举）。
+从 [Tinylibc](https://github.com/WHU-SC7/Tinylibc) 项目提取、独立发展的 C 编译器。
+约一万行 C，零 libc 依赖，已通过完整自举验证。
 
 ## 项目结构
 
@@ -10,7 +11,7 @@
 │   ├── tcc_rt.c        # 独立运行时（syscall 包装、malloc、printf）
 │   ├── tcc_rt_start.S  # 启动汇编 __tlibc_start → main → exit
 │   ├── lex.c           # 词法分析
-│   ├── parse.c         # 递归下降解析（⚠️ 已含 #include "tcc.h"，Makefile 旧规则依然保留）
+│   ├── parse.c         # 递归下降解析
 │   ├── preproc.c       # 预处理器（宏展开、#include、条件编译）
 │   ├── cgen.c          # 代码生成（函数、流程控制）
 │   ├── cgen_expr.c     # 表达式代码生成
@@ -24,158 +25,81 @@
 │   ├── tcc_need.h      # 最小化类型/常量/系统调用宏/函数声明
 │   └── elf.h           # ELF64 结构体定义
 ├── compiler-tests/     # 测试文件
-│   ├── *.c             # 常规测试（tcc 编译 + 运行时链接，28 个）
-│   ├── selfhost/       # 自举测试（tcc 编译，无运行时依赖，16 个，01-16）
-│   └── source/         # 源文件独立测试（验证单个 .c 文件的逻辑，9 个）
+│   ├── basic/          # 常规测试（tcc 编译 + tcc_rt 链接，28 个）
+│   ├── selfhost/       # 自包含测试（tcc 独立编译，无 tcc_rt 依赖，31 个）
+│   ├── source/         # 源文件独立测试（验证单个 .c 文件的逻辑，9 个）
+│   └── pending/        # 待修复 bug 的复现用例
 ├── ld.script           # 链接脚本
 ├── Makefile            # 构建系统
-├── build_self.sh       # （旧版）自举构建脚本
-└── bootstrap-selfhost.sh  # 自举自托管测试脚本（推荐）
+└── bootstrap-selfhost.sh  # 自举自托管测试脚本
 ```
 
 ## 构建
 
 ```sh
-make               # 构建 tcc、tpp、tas → build/
-make test          # 运行常规测试（compiler-tests/*.c）
-make test 03       # 运行指定编号测试
-make test-source                  # 源文件独立测试（compiler-tests/source/，gcc 编译）
-make test-source SCTEST_USE_TCC=1  # ↑ 同上，但改用 build/tcc 编译（自举验证）
-                                  # 日志在 tmp/test_source_*.log（运行、编译、链接）
-make test-selfhost # 自举测试（tcc 独自编译，不依赖运行时对象）
-./bootstrap-selfhost.sh  # 自举自托管测试：tcc 编译自身 → stage-2 tcc → 测试 selfhost
+make                         # 构建 tcc、tpp、tas → build/
+make test                    # 常规测试（28 个）
+make test 03                 # 指定编号测试
+make test 03 07              # 多编号测试
+make test-selfhost           # 自包含测试（31 个）
+make test-source             # 源文件独立测试（gcc 编译，9 个）
+make test-source-tcc         # 源文件独立测试（tcc 编译，9 个）
+./bootstrap-selfhost.sh      # 自举：stage-1 → stage-2 → 测试
+./bootstrap-to-10.sh         # 全链自举验证（stage-1 → stage-10）
 make clean
 ```
 
-## 输出
+## 测试状态（2026-07-08）
 
-```
-build/
-├── tcc            # C 编译器（stage-1，gcc 构建）
-├── tcc-stage2     # C 编译器（stage-2，tcc 自编译，由 bootstrap-selfhost.sh 产生）
-├── tpp            # 预处理器
-├── tas            # x86_64 汇编器
-├── stage2/        # stage-2 tcc 的目标文件
-└── *.o            # 运行时对象（测试链接用）
-```
-
-## 自举自托管测试（bootstrap-selfhost.sh）
-
-三步流程，一次性验证 tcc 的自举能力：
-
-1. **构建 stage-1**：gcc 编译 tcc → `build/tcc`
-2. **构建 stage-2**：stage-1 tcc 编译 tcc 自身 9 个 `.c` 源文件 → `ld` 链接 → `build/tcc-stage2`
-   - 注意：`tcc_rt_start.S` 是汇编，用 gcc 编译；`tpp`/`tas` 是独立工具，不参与链接
-3. **测试 stage-2**：stage-2 tcc 逐一编译→链接→运行 16 个 selfhost 测试
-
-所有日志输出到 `tmp/`：
-- `tmp/stage2_compile_*.log` — stage-2 各模块编译日志
-- `tmp/stage2_link.log` — stage-2 链接日志
-- `tmp/stage2_selfhost/*.log` — 每个 selfhost 测试的编译/链接/运行日志
-
-## 当前状态（2026-07-07）
-
-### 测试通过率
-
-| 测试套件 | 通过 / 总数 | 状态 |
-|----------|-------------|------|
-| `make test`（常规） | 28/28 | ✅ |
-| `make test-source`（gcc 编译） | 9/9 | ✅ |
-| `make test-source SCTEST_USE_TCC=1`（tcc 编译） | — | ⏳ 待验证 |
-| `make test-selfhost`（stage-1 tcc） | 16/16 | ✅ |
-| `bootstrap-selfhost.sh`（stage-2 tcc） | 0/16 | ❌ |
-
-### 自举进展
-
-- stage-1 tcc（gcc 构建）已能正确编译全部 16 个 selfhost 测试 ✅
-- stage-2 tcc（stage-1 自编译）能成功生成可执行二进制 ✅
-- stage-2 tcc 生成的 .o 文件存在链接问题（TLS 重定位错误）和运行崩溃 ❌
-- 主要卡点：stage-1 编译自身时产生的代码生成缺陷（segfault 在 lexer 解析阶段）
+| 测试套件 | 通过/总数 | 说明 |
+|----------|-----------|------|
+| `make test` | 28/28 ✅ | tcc 编译 + ld 链接 tcc_rt 运行时 |
+| `make test-selfhost` | 31/31 ✅ | tcc 独立编译，无 tcc_rt 依赖 |
+| `make test-source`（gcc） | 9/9 ✅ | gcc 编译源文件独立测试 |
+| `make test-source-tcc`（tcc） | 9/9 ✅ | tcc 编译源文件独立测试 |
+| `bootstrap-selfhost.sh`（stage-2） | 31/31 ✅ | stage-2 tcc 编译 selfhost 测试 |
+| `bootstrap-to-10.sh` | stage-3→10 字节级一致 ✅ | 全链收敛验证 |
 
 ## 设计原则
 
-- **无 libc 依赖**：运行时（tcc_rt.c）通过 `syscall` 宏直接调用 Linux 内核
-- **静态链接**：所有输出 ELF64 .o 文件，通过 `ld -nostdlib -static` 链接
-- **简化优先**：源码写法向 tcc 自身能编译的方向妥协，不自找麻烦
+- **无 libc 依赖**：运行时通过 `syscall` 宏直接调用 Linux 内核
+- **静态链接**：输出 ELF64 .o，`ld -nostdlib -static` 链接
+- **简化优先**：源码写法向 tcc 自身能编译的方向靠拢
 - **自举导向**：所有决策围绕"让 tcc 能编译自己"展开
 
-## 目标
+## 已知限制
 
-让 tcc 能完整编译自身（完整自举：stage-2 tcc 能通过全部 selfhost 测试）。
-
-## 已知限制（编写 selfhost 测试必读）
-
-tcc 尚未完备实现 C 标准。编写自举测试（`compiler-tests/selfhost/`）时
-必须避开的陷阱：
-
-### 🔥 会导致崩溃的硬限制
-
-| 限制 | 说明 | 绕过方式 |
-|------|------|----------|
-| **函数 epilogue 不可靠** | `main()` 的 return 语句代码生成有 bug，从 main 返回会崩溃 | 用 `sys_exit(N)` 替代 `return N`；入口函数设为 `void __tlibc_start(void)` 直接调 `sys_exit` |
-| **变参参数 ≤ 5 个** | 超过 5 个变参（fmt + 5 个参数以上）会读出错误值 | 限制每次调用 ≤ 6 参数（含 fmt） |
-| **无浮点（默认构建）** | `make` 默认不启用浮点支持（`-DTCC_FLOAT`） | 用整数运算代替；double 变量声明能用但运算符未实现 |
-| **无 libc** | 不能链接标准库，`printf`/`malloc` 等不可用 | 用自包含的 `sys_write` + `print_dec`/`print_hex` |
-| **内联汇编约束有限** | `__asm__` 支持基本约束但不支持复杂 reload | 用简单 `"=a"(var)` / `"a"(val)` 约束，避免复杂拼接 |
-
-### ⚠️ 类型系统注意点
-
-| 问题 | 说明 |
+| 特性 | 状态 |
 |------|------|
-| **指针嵌套解引用** | `*(p+1)` 中的 `p+1` 不是直接变量引用，代码生成器查不到 `elem_size` 和 `elem_is_unsigned`，解引用会按默认 1 字节处理。**始终用 `p[i]` 下标语法** |
-| **struct 标签解析顺序** | 前向引用的 struct 可能在布局计算时尚未注册，导致成员偏移计算失败 |
-| **强制类型转换解引用存储宽度** | `*(short *)ptr = val` 可能按 1 字节存储（解析器丢弃类型信息 × 代码生成查不到 elem_size） | 确保转换后的类型信息被传播到内部表达式的 elem_size |
-
-### 📝 语法/语义不支持
-
-| 特性 | 原因 |
-|------|------|
+| 浮点运算 | 默认构建未启用（`make CFLAGS+=-DTCC_FLOAT` 开启） |
 | VLA（变长数组） | 未实现 |
 | 位域（bitfield） | 未实现 |
 | 复合字面量 `(int[]){1,2}` | 未实现 |
 | 指定初始化器 `.field=val` | 未实现 |
 | `_Generic` | 未实现 |
-| `inline` 关键字 | 解析但语义忽略 |
-| 宽字符/宽字符串 | 未实现 |
-| `long double` | 降级为 double |
+| `long double` | 不支持 |
 | `goto` 跨函数 | 未检查 |
+| 宽字符/宽字符串 | 未实现 |
 
-### ✅ 安全的 selfhost 测试模板
+### 已修复的历史限制
 
-参照现有测试 `01_totally_selfcontained.c` 的结构：
+以下问题曾在开发过程中存在，现已修复，对应测试持续回归验证：
 
-```c
-// EXPECT: 0       ← make test 期望的退出码
-// SELF_CONTAINED  ← 标记无运行时依赖
+| 问题 | 修复验证 |
+|------|----------|
+| `main()` 的 `return` 代码生成缺陷 | `compiler-tests/basic/*.c` 均正常使用 `main()` + `return` ✅ |
+| 变参参数超过 5 个传参错误 | `selfhost/11_printf_manyargs.c` 验证 6–12 个参数 ✅ |
+| `*(ptr + N)` 指针嵌套解引用按 1 字节加载 | `selfhost/20_ptr_arith.c` 验证 `int*`/`long*` 解引用 ✅ |
+| `*(cast_type *)ptr = val` 存储宽度错误 | `selfhost/16_cast_deref_assign.c` 验证 ✅ |
+| 结构体返回值数组元素赋值只复制 8 字节 | `selfhost/29_struct_return_expr.c` 等验证 ✅ |
+| `Lexer` 结构体复制只复制 8 字节（自举阻断 bug） | 全链 stage-3→10 收敛验证 ✅ |
 
-static long sys_write(int fd, const char *buf, unsigned long len) {
-    unsigned long ret;
-    __asm__ __volatile__ ("syscall"
-        : "=a"(ret) : "a"(1), "D"((long)fd), "S"((long)buf), "d"((long)len)
-        : "rcx", "r11", "memory");
-    return (long)ret;
-}
-static void sys_exit(int code) {
-    __asm__ __volatile__ ("syscall"
-        : : "a"((long)60), "D"((long)code)
-        : "rcx", "r11", "memory");
-    for (;;) ;
-}
-// 用 sys_exit(0/非0) 结束，绝不 return
-// 变参调用保持在 5 个值以内
-void __tlibc_start(void) {
-    /* 测试逻辑 ... */
-    sys_exit(0);  /* pass */
-    sys_exit(1);  /* fail */
-}
+## 验证
+
+```sh
+make test             # 28/28 ✅
+make test-selfhost    # 31/31 ✅
+./bootstrap-to-10.sh  # stage-3 → stage-10 字节级完全一致 ✅
 ```
 
-### 测试顺序建议
-
-新增 selfhost 测试时，从最简单的开始验证，逐步增加复杂度：
-
-1. 常量加载与算术（01）
-2. 负数与符号扩展（02）
-3. 变参调用（03）
-4. 无符号类型语义（04）
-5. 复杂表达式、指针运算（05-16）
+编译器输出在 stage-3 收敛，stage-3 到 stage-10 保持字节级一致——一次完整可验证的自举。
