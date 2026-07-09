@@ -25,40 +25,44 @@
 │   ├── tcc_need.h      # 最小化类型/常量/系统调用宏/函数声明
 │   └── elf.h           # ELF64 结构体定义
 ├── compiler-tests/     # 测试文件
-│   ├── basic/          # 常规测试（tcc 编译 + tcc_rt 链接，28 个）
-│   ├── selfhost/       # 自包含测试（tcc 独立编译，无 tcc_rt 依赖，34 个）
-│   ├── source/         # 源文件独立测试（验证单个 .c 文件的逻辑，9 个）
+│   ├── basic/          # 常规测试（tcc 编译 + tcc_rt 链接，29 个）
+│   ├── selfhost/       # 自包含测试（tcc 独立编译，无 tcc_rt 依赖，35 个）
+│   ├── source/         # 源文件独立测试（验证单个 .c 文件的逻辑，8 个）
 │   └── pending/        # 待修复 bug 的复现用例
+├── bootstrap/          # 自举种子（tcc + tas 二进制，git 追踪）
+│   └── README.md
 ├── ld.script           # 链接脚本
-├── Makefile            # 构建系统
-└── bootstrap-selfhost.sh  # 自举自托管测试脚本
+├── Makefile            # 构建系统（默认用 bootstrap/tcc + bootstrap/tas）
+├── bootstrap-selfhost.sh  # 自举自托管测试
+└── bootstrap-to-10.sh     # 全链收敛验证
 ```
 
 ## 构建
 
 ```sh
-make                         # 构建 tcc、tpp、tas → build/
-make test                    # 常规测试（28 个）
-make test 03                 # 指定编号测试
-make test 03 07              # 多编号测试
-make test-selfhost           # 自包含测试（34 个）
-make test-source             # 源文件独立测试（gcc 编译，9 个）
-make test-source-tcc         # 源文件独立测试（tcc 编译，9 个）
-./bootstrap-selfhost.sh      # 自举：stage-1 → stage-2 → 测试
-./bootstrap-to-10.sh         # 全链自举验证（stage-1 → stage-10）
+make                              # 自举构建（bootstrap/tcc + bootstrap/tas）
+make test                         # 常规测试（29 个）
+make test 03                      # 指定编号测试
+make test 03 07                   # 多编号测试
+make test-selfhost                # 自包含测试（35 个）
+make test-source                  # 源文件独立测试（8 个）
+make update-bootstrap             # 用最新 build/ 产物更新 bootstrap/ 种子
+./bootstrap-selfhost.sh           # 自举测试：bootstrap/tcc → stage-2 → 35 测试
+./bootstrap-to-10.sh              # 全链收敛验证（stage-1 → stage-10）
 make clean
 ```
 
-## 测试状态（2026-07-08）
+全链零 gcc 依赖。`bootstrap/tcc` + `bootstrap/tas` 是 git 追踪的种子二进制。
+
+## 测试状态（2026-07-09）
 
 | 测试套件 | 通过/总数 | 说明 |
 |----------|-----------|------|
-| `make test` | 28/28 ✅ | tcc 编译 + ld 链接 tcc_rt 运行时 |
-| `make test-selfhost` | **34/34 ✅** | tcc 独立编译，无 tcc_rt 依赖 |
-| `make test-source`（gcc） | 9/9 ✅ | gcc 编译源文件独立测试 |
-| `make test-source-tcc`（tcc） | 9/9 ✅ | tcc 编译源文件独立测试 |
-| `bootstrap-selfhost.sh`（stage-2） | 31/31 ✅ | stage-2 tcc 编译 selfhost 测试 |
-| `bootstrap-to-10.sh` | stage-3→10 字节级一致 ✅ | 全链收敛验证 |
+| `make test` | 29/29 ✅ | tcc 编译 + ld 链接 tcc_rt 运行时 |
+| `make test-selfhost` | **35/35 ✅** | tcc 独立编译，无 tcc_rt 依赖 |
+| `make test-source` | 8/8 ✅ | tcc 编译源文件独立测试 |
+| `bootstrap-selfhost.sh` | 35/35 ✅ | 种子自举 → stage-2 全部测试通过 |
+| `bootstrap-to-10.sh` | stage-2→10 字节级一致 ✅ | 全链收敛验证（头尾完整测试） |
 
 ## 设计原则
 
@@ -71,7 +75,8 @@ make clean
 
 | 特性 | 状态 |
 |------|------|
-| 浮点运算 | 默认构建未启用（`make CFLAGS+=-DTCC_FLOAT` 开启） |
+| int→int64_t 符号扩展（`int a=-4; int64_t b=a;` 高位丢） | codegen bug，未修 |
+| 浮点运算 | 默认未启用（`make CFLAGS+=-DTCC_FLOAT` 开启） |
 | VLA（变长数组） | 未实现 |
 | 位域（bitfield） | 未实现 |
 | 复合字面量 `(int[]){1,2}` | 未实现 |
@@ -80,26 +85,35 @@ make clean
 | `long double` | 不支持 |
 | `goto` 跨函数 | 未检查 |
 | 宽字符/宽字符串 | 未实现 |
+| `-I` include 路径、`-MD` 依赖追踪 | 静默忽略（tcc 参数解析极简） |
 
 ### 已修复的历史限制
 
-以下问题曾在开发过程中存在，现已修复，对应测试持续回归验证：
+以下问题曾阻断自举，现已修复，持续回归验证：
 
-| 问题 | 修复验证 |
-|------|----------|
-| `main()` 的 `return` 代码生成缺陷 | `compiler-tests/basic/*.c` 均正常使用 `main()` + `return` ✅ |
-| 变参参数超过 5 个传参错误 | `selfhost/11_printf_manyargs.c` 验证 6–12 个参数 ✅ |
-| `*(ptr + N)` 指针嵌套解引用按 1 字节加载 | `selfhost/20_ptr_arith.c` 验证 `int*`/`long*` 解引用 ✅ |
-| `*(cast_type *)ptr = val` 存储宽度错误 | `selfhost/16_cast_deref_assign.c` 验证 ✅ |
-| 结构体返回值数组元素赋值只复制 8 字节 | `selfhost/29_struct_return_expr.c` 等验证 ✅ |
-| `Lexer` 结构体复制只复制 8 字节（自举阻断 bug） | 全链 stage-3→10 收敛验证 ✅ |
+| 问题 | 修复 |
+|------|------|
+| `*main()` 的 `return` 代码生成缺陷 | 基本测试全过 |
+| 变参超过 5 个传参错误 | `selfhost/11_printf_manyargs.c` |
+| `*(ptr + N)` 指针嵌套解引用按 1 字节加载 | `selfhost/20_ptr_arith.c` |
+| `*(cast_type *)ptr = val` 存储宽度错误 | `selfhost/16_cast_deref_assign.c` |
+| 结构体返回值数组元素只复制 8 字节 | `selfhost/29_struct_return_expr.c` |
+| `Lexer` 结构体复制只复制 8 字节（自举阻断 bug） | 收敛验证 |
+| `add_rel()` int→Elf64_Sxword 符号扩展缺失（2026-07-09） | `app/tas.c` 参数改为 64 位 + `-4LL` |
+
+### codegen 待修复
+
+- **int→int64_t 赋值符号扩展**：tcc 用 `mov eax`（32-bit）加载 int，x86_64 硬件自动高位置零。
+  正确做法需 `movsxd rax`。影响所有 `int`→`long`/`int64_t`/`Elf64_Sxword` 赋值。
+  绕过：源头变量/参数直接用 64 位类型，常量用 `-4LL` 后缀。详见 `.claude/tcc-gotchas.md`。
 
 ## 验证
 
 ```sh
-make test             # 28/28 ✅
-make test-selfhost    # 34/34 ✅
-./bootstrap-to-10.sh  # stage-3 → stage-10 字节级完全一致 ✅
+make test             # 29/29 ✅
+make test-selfhost    # 35/35 ✅
+make test-source      # 8/8 ✅
+./bootstrap-to-10.sh  # stage-2→10 字节级完全一致 ✅
 ```
 
-编译器输出在 stage-3 收敛，stage-3 到 stage-10 保持字节级一致——一次完整可验证的自举。
+全链零 gcc 依赖。自举收敛证明 tcc 是自洽的编译器。

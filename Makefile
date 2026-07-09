@@ -2,22 +2,29 @@
 # Makefile — tcc (ToyCCompiler) 构建系统
 #
 # 用法：
-#   make             构建
-#   make test        运行常规测试
-#   make test-selfhost  运行自包含测试
+#   make                        自举构建（bootstrap/tcc + bootstrap/tas）
+#   make test                   运行常规测试（29 个）
+#   make test 03                指定编号测试
+#   make test 03 07             多编号测试
+#   make test-selfhost          自包含测试（35 个）
+#   make test-source            源文件独立测试（8 个）
+#   make update-bootstrap       用 build 产物更新 bootstrap/ 种子
+#   make clean
 #
-# tcc 还处于早期开发阶段，目前用 gcc 编译。
-# 自举种子详见 bootstrap/ 目录，用于验证自举收敛性。
+# 全链自举构建。种子二进制见 bootstrap/README.md
 #
 
 # ─── 工具链 ────────────────────────────────────────────────────
 
-CC      ?= gcc
-LD      ?= ld
+BOOTSTRAP := bootstrap
+CC        := $(BOOTSTRAP)/tcc
+AS        := $(BOOTSTRAP)/tas
+LD        ?= ld
 
 # ─── 标志 ───────────────────────────────────────────────────────
 
 CFLAGS  := -nostdlib -ffreestanding -Wall -Wextra -I include -I app
+# tcc 忽略所有不识别的 flag（-nostdlib -Wall -Wextra -I -MD 等均无害）。
 LDFLAGS := -nostdlib -static -e __tlibc_start
 
 # ─── 路径 ───────────────────────────────────────────────────────
@@ -35,7 +42,7 @@ HEADERS  := $(TCC_NEED) $(ELF_H) $(ELF_W_H)
 
 # ─── 默认目标 ──────────────────────────────────────────────────
 
-.PHONY: all clean test test-selfhost test-source test-source-tcc
+.PHONY: all clean update-bootstrap test test-selfhost test-source test-all
 
 all: $(BUILD)/tcc $(BUILD)/tas
 	@printf "$(GREEN)✓ 构建完成$(RESET)\n"
@@ -69,7 +76,7 @@ $(BUILD):
 
 $(BUILD)/tcc_rt_start.o: $(SRC)/tcc_rt_start.S | $(BUILD)
 	@printf "  $(BLUE)  AS$(RESET)  %s\n" "$<"
-	$(CC) -x assembler-with-cpp -c $< -o $@
+	$(AS) $< -o $@
 
 # ─── C 编译规则 ────────────────────────────────────────────────
 
@@ -114,6 +121,15 @@ clean:
 	rm -rf $(BUILD) tmp
 	@printf "$(GREEN)done$(RESET)\n"
 
+# ─── 更新自举种子 ──────────────────────────────────────────────
+
+update-bootstrap: $(BUILD)/tcc $(BUILD)/tas
+	@printf "$(BLUE)  BOOTSTRAP$(RESET) 更新自举种子 ...\n"
+	@mkdir -p $(BOOTSTRAP)
+	cp $(BUILD)/tcc $(BOOTSTRAP)/tcc
+	cp $(BUILD)/tas $(BOOTSTRAP)/tas
+	@printf "$(GREEN)✓ 种子已更新: $(BOOTSTRAP)/tcc $(BOOTSTRAP)/tas$(RESET)\n"
+
 # ─── 依赖文件包含（-MD 自动生成的 .d 实现增量头文件跟踪） ──
 -include $(ALL_OBJS:.o=.d)
 
@@ -132,7 +148,7 @@ LDTESTFLAGS := -nostdlib -static -T ld.script
 # 常规测试
 test: $(BUILD)/tcc $(BUILD)/tcc_rt.o $(BUILD)/tcc_rt_start.o
 	@ok=0; fail=0; total=0; mkdir -p tmp; \
-	ids=$(filter-out test test-all test-selfhost test-source test-source-tcc,$(MAKECMDGOALS)); \
+	ids=$(filter-out test test-all test-selfhost test-source,$(MAKECMDGOALS)); \
 	if [ -z "$$ids" ]; then files="$(TESTDIR)/*.c"; \
 	else files=; for n in $$ids; do files="$$files $(TESTDIR)/$${n}_*.c"; done; fi; \
 	printf "$(BLUE)══════ tcc 常规测试 ══════$(RESET)\n"; \
@@ -177,37 +193,24 @@ test-selfhost: $(BUILD)/tcc
 # ─── 源文件独立测试 ───────────────────────────────────────────
 
 SOURCETESTDIR := compiler-tests/source
-SCTEST_CC       ?= gcc
-SCTEST_CFLAGS   ?= -nostdlib -ffreestanding -Wall -Wextra -O0
-SCTEST_LDFLAGS  := -nostdlib -static -T ld.script
+SCTEST_LDFLAGS := -nostdlib -static -T ld.script
 
-ifeq ($(SCTEST_USE_TCC),)
-test-source: $(SOURCETESTDIR)/lex.c
-else
 test-source: $(BUILD)/tcc
-endif
 	@ok=0; fail=0; total=0; mkdir -p tmp; \
-	printf "$(BLUE)══════ source 测试（$(if $(SCTEST_USE_TCC),tcc,gcc) 编译）══════$(RESET)\n\n"; \
+	printf "$(BLUE)══════ source 测试（tcc 编译）══════$(RESET)\n\n"; \
 	for f in $(SOURCETESTDIR)/*.c; do \
 		name=$$(basename "$$f" .c); \
 		total=$$((total+1)); \
 		expect=$$(sed -n 's/.*EXPECT: *\([0-9]*\).*/\1/p' "$$f" | head -1); \
 		[ -z "$$expect" ] && expect=0; \
 		printf "  $(BLUE)%-25s$(RESET) " "$$name"; \
-		if [ -n "$(SCTEST_USE_TCC)" ]; then \
-			$(BUILD)/tcc "$$f" -o /tmp/$$name.o 2>tmp/test_source_$$name-compile.log; \
-			if [ $$? -ne 0 ]; then \
-				printf "$(RED)COMPILE FAIL$(RESET)\n"; fail=$$((fail+1)); continue; \
-			fi; \
-			$(LD) $(SCTEST_LDFLAGS) /tmp/$$name.o -o /tmp/test_$$name 2>tmp/test_source_$$name-link.log; \
-			if [ $$? -ne 0 ]; then \
-				printf "$(RED)LINK FAIL$(RESET)\n"; fail=$$((fail+1)); continue; \
-			fi; \
-		else \
-			$(SCTEST_CC) $(SCTEST_CFLAGS) -Wl,-e,__tlibc_start "$$f" -o /tmp/test_$$name 2>tmp/test_source_$$name-compile.log; \
-			if [ $$? -ne 0 ]; then \
-				printf "$(RED)COMPILE FAIL$(RESET)\n"; fail=$$((fail+1)); continue; \
-			fi; \
+		$(BUILD)/tcc "$$f" -o /tmp/$$name.o 2>tmp/test_source_$$name-compile.log; \
+		if [ $$? -ne 0 ]; then \
+			printf "$(RED)COMPILE FAIL$(RESET)\n"; fail=$$((fail+1)); continue; \
+		fi; \
+		$(LD) $(SCTEST_LDFLAGS) /tmp/$$name.o -o /tmp/test_$$name 2>tmp/test_source_$$name-link.log; \
+		if [ $$? -ne 0 ]; then \
+			printf "$(RED)LINK FAIL$(RESET)\n"; fail=$$((fail+1)); continue; \
 		fi; \
 		/tmp/test_$$name > tmp/test_source_$$name.log 2>&1; got=$$?; \
 		if [ "$$got" = "$$expect" ]; then \
@@ -219,12 +222,9 @@ endif
 	printf "\n$(BLUE)══════$(RESET) $(GREEN)%d passed$(RESET), $(RED)%d failed$(RESET), %d total $(BLUE)══════$(RESET)\n" "$$ok" "$$fail" "$$total"; \
 	[ "$$fail" -eq 0 ]
 
-test-source-tcc: $(BUILD)/tcc
-	$(MAKE) test-source SCTEST_USE_TCC=1
-
 # ─── 全部测试 ──────────────────────────────────────────────────
 
-test-all: test test-selfhost test-source test-source-tcc
+test-all: test test-selfhost test-source
 	@printf "$(GREEN)✓ 全部测试通过$(RESET)\n"
 
 # ─── 允许 make test 01 05 等带编号参数 ────────────────────────

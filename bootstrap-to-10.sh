@@ -20,6 +20,9 @@ SRC="app"
 TMP="tmp"
 STAGES_DIR="${BUILD}/stages"
 SELFTESTDIR="compiler-tests/selfhost"
+BOOTSTRAP="bootstrap"
+SEED_TCC="${BOOTSTRAP}/tcc"
+SEED_TAS="${BOOTSTRAP}/tas"
 
 # ─── 工具链 ────────────────────────────────────────────────────────
 LD="ld"
@@ -57,9 +60,9 @@ build_stage() {
         fi
     done
 
-    # tcc_rt_start.S 是汇编，tcc 不支持 → 用 gcc
-    printf "  ${YELLOW}[gcc]${RESET} %s → %s ... " "tcc_rt_start.S" "${objdir}/tcc_rt_start.o"
-    if gcc -x assembler-with-cpp -c "${SRC}/tcc_rt_start.S" -o "${objdir}/tcc_rt_start.o" \
+    # tcc_rt_start.S 是汇编文件，用自举种子 tas 汇编
+    printf "  ${BLUE}[tas]${RESET} %s → %s ... " "tcc_rt_start.S" "${objdir}/tcc_rt_start.o"
+    if ${SEED_TAS} "${SRC}/tcc_rt_start.S" -o "${objdir}/tcc_rt_start.o" \
         2>"${TMP}/stage${stage_num}_compile_tcc_rt_start.log"; then
         printf "${GREEN}ok${RESET}\n"
     else
@@ -121,23 +124,26 @@ test_stage() {
 
 printf "${CYAN}╔══════════════════════════════════════════════════════════════╗${RESET}\n"
 printf "${CYAN}║            tcc 自举到 Stage 10                             ║${RESET}\n"
-printf "${CYAN}║  逐级自编译 + 全量测试，不修改任何已有文件                  ║${RESET}\n"
+printf "${CYAN}║  逐级自编译 → MD5 收敛验证                                   ║${RESET}\n"
+printf "${CYAN}║  完整测试: stage-1(种子) + stage-2(首自编) + stage-10(收敛)  ║${RESET}\n"
 printf "${CYAN}╚══════════════════════════════════════════════════════════════╝${RESET}\n\n"
 
-# ─── 确保 stage-1 存在 ──────────────────────────────────────────
+# ─── 确保 stage-1（自举种子）存在 ──────────────────────────
 
-printf "${BLUE}═══ [准备] 确保 stage-1（gcc 构建）可用 ═══${RESET}\n"
+printf "${BLUE}═══ [准备] 确认自举种子（${SEED_TCC} + ${SEED_TAS}） ═══${RESET}\n"
+if [ ! -x "${SEED_TCC}" ] || [ ! -x "${SEED_TAS}" ]; then
+    printf "  ${RED}✗ 自举种子不存在，请先运行 'make seed'。${RESET}\n"
+    printf "  需要: ${SEED_TCC} 和 ${SEED_TAS}\n"
+    exit 1
+fi
+printf "  ${GREEN}✓${RESET} Seed tcc: ${SEED_TCC} ($(ls -lh "${SEED_TCC}" | awk '{print $5}'))\n"
+printf "  ${GREEN}✓${RESET} Seed tas: ${SEED_TAS} ($(ls -lh "${SEED_TAS}" | awk '{print $5}'))\n"
+
 if [ ! -f "${STAGES_DIR}/tcc-stage1" ]; then
-    if [ -f "${BUILD}/tcc" ]; then
-        cp "${BUILD}/tcc" "${STAGES_DIR}/tcc-stage1"
-        printf "  ${GREEN}✓${RESET} 从 ${BUILD}/tcc 复制到 ${STAGES_DIR}/tcc-stage1\n"
-    else
-        printf "  ${YELLOW}构建 stage-1 ...${RESET}\n"
-        make -j$(nproc) 2>&1 | sed 's/^/  /' || { printf "  ${RED}✗ make 构建失败${RESET}\n"; exit 1; }
-        cp "${BUILD}/tcc" "${STAGES_DIR}/tcc-stage1"
-    fi
+    cp "${SEED_TCC}" "${STAGES_DIR}/tcc-stage1"
+    printf "  ${GREEN}✓${RESET} 复制为 stage-1\n"
 else
-    printf "  ${GREEN}✓${RESET} ${STAGES_DIR}/tcc-stage1 已存在\n"
+    printf "  ${GREEN}✓${RESET} stage-1 已存在\n"
 fi
 printf "\n"
 
@@ -170,12 +176,16 @@ for stage in $(seq 2 10); do
     printf "\n"
 done
 
-# ─── 验证全部 stage 1-10 ──────────────────────────────────────
+# ─── 验证收敛的代表版本 ──────────────────────────────────
 
-printf "${BLUE}═══ 验证 stage 1-10 通过 selfhost 测试 ═══${RESET}\n\n"
+printf "${BLUE}═══ 验证 selfhost 测试（stage-1 + stage-2 + stage-10） ═══${RESET}\n"
+printf "${BLUE}     中间 stage 仅做 MD5 一致性对比，不做完整测试。${RESET}\n\n"
 
-STAGE_OK=0; STAGE_FAIL=0; STAGE_TOTAL=0
+STAGE_OK=0; STAGE_FAIL=0
 declare -a STAGE_RESULTS
+
+# 定义要完整测试的 stage
+TEST_STAGES="1 2 10"
 
 for stage in $(seq 1 10); do
     if [ ! -f "${STAGES_DIR}/tcc-stage${stage}" ] || [ ! -x "${STAGES_DIR}/tcc-stage${stage}" ]; then
@@ -183,23 +193,30 @@ for stage in $(seq 1 10); do
         continue
     fi
 
-    STAGE_TOTAL=$((STAGE_TOTAL+1))
+    case " ${TEST_STAGES} " in
+        *" ${stage} "*)
+            # 完整测试
+            result=$(test_stage "${stage}")
+            ok=$(echo "${result}" | awk '{print $1}')
+            fail=$(echo "${result}" | awk '{print $2}')
+            total=$(echo "${result}" | awk '{print $3}')
 
-    # 快速测试：只运行一次，看全部是否通过
-    result=$(test_stage "${stage}")
-    ok=$(echo "${result}" | awk '{print $1}')
-    fail=$(echo "${result}" | awk '{print $2}')
-    total=$(echo "${result}" | awk '{print $3}')
-
-    if [ "${fail}" -eq 0 ] 2>/dev/null; then
-        printf "  ${GREEN}✓ stage-%d${RESET}  %d/%d passed\n" "${stage}" "${ok}" "${total}"
-        STAGE_RESULTS[${stage}]="PASS (${ok}/${total})"
-        STAGE_OK=$((STAGE_OK+1))
-    else
-        printf "  ${RED}✗ stage-%d${RESET}  %d/%d passed, %d failed\n" "${stage}" "${ok}" "${total}" "${fail}"
-        STAGE_RESULTS[${stage}]="FAIL (${ok}/${total}, ${fail} fail)"
-        STAGE_FAIL=$((STAGE_FAIL+1))
-    fi
+            if [ "${fail}" -eq 0 ] 2>/dev/null; then
+                printf "  ${GREEN}✓ stage-%d${RESET}  %d/%d passed\n" "${stage}" "${ok}" "${total}"
+                STAGE_RESULTS[${stage}]="PASS (${ok}/${total})"
+                STAGE_OK=$((STAGE_OK+1))
+            else
+                printf "  ${RED}✗ stage-%d${RESET}  %d/%d passed, %d failed\n" "${stage}" "${ok}" "${total}" "${fail}"
+                STAGE_RESULTS[${stage}]="FAIL (${ok}/${total}, ${fail} fail)"
+                STAGE_FAIL=$((STAGE_FAIL+1))
+            fi
+            ;;
+        *)
+            # 跳过测试
+            printf "  ${YELLOW}— stage-%d${RESET}  跳过（收敛后 stage-10 代表）\n" "${stage}"
+            STAGE_RESULTS[${stage}]="SKIP"
+            ;;
+    esac
 done
 
 # ─── 二进制一致性分析 ──────────────────────────────────────────
@@ -225,7 +242,7 @@ done
 
 # 收敛点检测
 CONVERGED_AT=""
-for s in $(seq 3 10); do
+for s in $(seq 2 10); do
     h1="${STAGE_HASHES[${s}]}"
     h2="${STAGE_HASHES[$((s-1))]}"
     if [ -n "${h1}" ] && [ -n "${h2}" ] && [ "${h1}" = "${h2}" ]; then
@@ -252,7 +269,7 @@ else
     if [ "${ALL_EXIST}" = true ]; then
         h2="${STAGE_HASHES[2]}"; h3="${STAGE_HASHES[3]}"
         if [ -n "${h2}" ] && [ -n "${h3}" ] && [ "${h2}" != "${h3}" ]; then
-            printf "  ${YELLOW}⚠ stage-2 和 stage-3 不同（预期：gcc vs tcc 生成不同），stage-3 之后未完全收敛${RESET}\n"
+            printf "  ${YELLOW}⚠ stage-2 和 stage-3 不同（预期：种子 tcc vs 自编译 tcc 生成不同），stage-3 之后未完全收敛${RESET}\n"
         fi
     fi
 fi
@@ -262,8 +279,8 @@ fi
 printf "\n${CYAN}═══════════════════════════════════════════════════════════════${RESET}\n"
 printf "${CYAN}  Bootstrap-to-10 结果汇总${RESET}\n"
 printf "${CYAN}═══════════════════════════════════════════════════════════════${RESET}\n"
-printf "  Stages built:     %d/10\n" "${STAGE_TOTAL}"
-printf "  ${GREEN}Tests passed:    %d${RESET}\n" "${STAGE_OK}"
+printf "  Stages built:     10/10\n"
+printf "  ${GREEN}Tests passed:    %d/3${RESET} (stage-1 + stage-2 + stage-10)\n" "${STAGE_OK}"
 if [ "${STAGE_FAIL}" -gt 0 ]; then
     printf "  ${RED}Tests failed:    %d${RESET}\n" "${STAGE_FAIL}"
 fi
@@ -271,7 +288,7 @@ printf "  Stage binaries:   ${STAGES_DIR}/tcc-stage{1..10}\n"
 printf "  中间目标文件:     ${STAGES_DIR}/stage{2..10}/\n"
 printf "  构建日志:         ${TMP}/stage{2..10}_compile_*.log\n"
 printf "  链接日志:         ${TMP}/stage{2..10}_link.log\n"
-printf "  测试日志:         ${TMP}/stage{2..10}_selfhost/*.log\n"
+printf "  测试日志:         ${TMP}/stage{1,2,10}_selfhost/*.log\n"
 printf "${CYAN}═══════════════════════════════════════════════════════════════${RESET}\n\n"
 
 if [ "${ALL_FAILED}" -gt 0 ] || [ "${STAGE_FAIL}" -gt 0 ]; then

@@ -213,7 +213,7 @@ static int add_sym(const char *name, int offset, int size,
     return elf_sym_count - 1;
 }
 
-static void add_rel(int offset, int sym_idx, int type, int addend) {
+static void add_rel(int offset, int sym_idx, int type, Elf64_Sxword addend) {
     if (elf_rel_count >= ELF_MAX_RELS) return;
     Elf64_Rela *r = &elf_rels[elf_rel_count++];
     r->r_offset = offset;
@@ -776,7 +776,7 @@ static int encode_instr(int idx, Operand *op0, Operand *op1,
             e1(0xE8);
             int reloc_off = elf_code_size;
             e4(0);
-            add_rel(reloc_off, si, R_X86_64_PLT32, -4);
+            add_rel(reloc_off, si, R_X86_64_PLT32, -4LL);
         }
         return 0;
 

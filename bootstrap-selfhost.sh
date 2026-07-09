@@ -3,9 +3,8 @@
 # bootstrap-selfhost.sh — tcc 自举自托管测试
 #
 # 流程：
-#   1. 用 gcc 构建 tcc（stage-1）
-#   2. 用 stage-1 tcc 编译 tcc 自身源码 → 链接得到 stage-2 tcc
-#   3. 用 stage-2 tcc 编译、链接、运行 selfhost 测试
+#   1. 用自举种子 bootstrap/tcc + bootstrap/tas 构建 stage-2 tcc
+#   2. 用 stage-2 tcc 编译、链接、运行 selfhost 测试
 #
 # 全部日志输出到 tmp/ 目录，stage-2 的日志带 stage2_ 前缀。
 # 退出码：0 = 全部通过，1 = 有失败。
@@ -24,6 +23,9 @@ INC="include"
 TMP="tmp"
 SELFTESTDIR="compiler-tests/selfhost"
 STAGE2_DIR="${BUILD}/stage2"
+BOOTSTRAP="bootstrap"
+SEED_TCC="${BOOTSTRAP}/tcc"
+SEED_TAS="${BOOTSTRAP}/tas"
 
 mkdir -p "${TMP}" "${STAGE2_DIR}"
 
@@ -31,42 +33,32 @@ mkdir -p "${TMP}" "${STAGE2_DIR}"
 LD="ld"
 LDFLAGS="-nostdlib -static -e __tlibc_start"
 SELFTEST_LDFLAGS="-nostdlib -static -T ld.script"
-# 注意：tcc 不支持 -I 标志（include 路径硬编码为 ./ ./include/ 等）
-# 源文件 #include "..." 时预处理器自动从源文件所在目录搜索
 
 printf "${BLUE}╔══════════════════════════════════════════════════════════╗${RESET}\n"
 printf "${BLUE}║        tcc 自举自托管测试脚本（Bootstrap + Selfhost）     ║${RESET}\n"
 printf "${BLUE}╚══════════════════════════════════════════════════════════╝${RESET}\n\n"
 
-# ─── 第 1 步：用 gcc 构建 stage-1 tcc ─────────────────────────────
+# ─── 第 1 步：确认自举种子可用 ─────────────────────────────────
 
-printf "${BLUE}=== [1/3] 构建 stage-1 tcc（gcc → ${BUILD}/tcc） ===${RESET}\n"
-if [ ! -f "${BUILD}/tcc" ]; then
-    make -j$(nproc) 2>&1 | sed 's/^/  /' || {
-        printf "  ${RED}ERROR${RESET} make 构建失败\n"
-        exit 1
-    }
-else
-    printf "  ${GREEN}已存在${RESET} ${BUILD}/tcc，跳过构建。如需重建请先 make clean\n"
-fi
-
-# 确认 stage-1 tcc 可执行
-if [ ! -x "${BUILD}/tcc" ]; then
-    printf "  ${RED}ERROR${RESET} ${BUILD}/tcc 不存在或不可执行\n"
+printf "${BLUE}=== [1/3] 确认自举种子（${SEED_TCC} + ${SEED_TAS}） ===${RESET}\n"
+if [ ! -x "${SEED_TCC}" ] || [ ! -x "${SEED_TAS}" ]; then
+    printf "  ${RED}ERROR${RESET} 自举种子不存在，请先运行 'make seed' 构建种子。\n"
+    printf "  需要: ${SEED_TCC} 和 ${SEED_TAS}\n"
     exit 1
 fi
-STAGE1_TCC="${BUILD}/tcc"
-printf "  Stage-1 tcc: ${STAGE1_TCC}\n\n"
+printf "  ${GREEN}✓${RESET} Seed tcc: ${SEED_TCC} ($(ls -lh "${SEED_TCC}" | awk '{print $5}'))\n"
+printf "  ${GREEN}✓${RESET} Seed tas: ${SEED_TAS} ($(ls -lh "${SEED_TAS}" | awk '{print $5}'))\n"
+printf "\n"
 
-# ─── 第 2 步：用 stage-1 tcc 编译自身 → stage-2 tcc ─────────────
+# ─── 第 2 步：用种子 tcc 编译自身 → stage-2 tcc ─────────────
 
-printf "${BLUE}=== [2/3] 构建 stage-2 tcc（stage-1 tcc 编译自身 → ${BUILD}/tcc-stage2） ===${RESET}\n"
+printf "${BLUE}=== [2/3] 构建 stage-2 tcc（seed tcc 编译自身 → ${BUILD}/tcc-stage2） ===${RESET}\n"
 
 # 需要编译的 C 源文件（只编译 tcc 本身所需的模块；tpp 和 tas 是独立工具，
 # 它们有自己的 main() 和重复符号，不能混入同一个链接。）
 STAGE2_C_FILES="${SRC}/tcc.c ${SRC}/lex.c ${SRC}/parse.c ${SRC}/preproc.c ${SRC}/cgen.c ${SRC}/cgen_expr.c ${SRC}/cgen_asm.c ${SRC}/elf_write.c ${SRC}/tcc_rt.c"
 
-# 用 stage-1 tcc 编译每个 C 源文件
+# 用种子 tcc 编译每个 C 源文件
 COMPILE_FAILED=0
 for cfile in ${STAGE2_C_FILES}; do
     basename_c=$(basename "${cfile}" .c)
@@ -74,7 +66,7 @@ for cfile in ${STAGE2_C_FILES}; do
 
     printf "  ${BLUE}编译${RESET} %s → %s ... " "${cfile}" "${ofile}"
 
-    if ${STAGE1_TCC} "${cfile}" -o "${ofile}" 2>"${TMP}/stage2_compile_${basename_c}.log"; then
+    if ${SEED_TCC} "${cfile}" -o "${ofile}" 2>"${TMP}/stage2_compile_${basename_c}.log"; then
         printf "${GREEN}ok${RESET}\n"
     else
         printf "${RED}FAIL${RESET}（日志: ${TMP}/stage2_compile_${basename_c}.log）\n"
@@ -82,9 +74,9 @@ for cfile in ${STAGE2_C_FILES}; do
     fi
 done
 
-# 编译 tcc_rt_start.S（汇编文件，用 gcc 而非 tcc）
-printf "  ${YELLOW}[gcc]${RESET} %s → %s ... " "tcc_rt_start.S" "${STAGE2_DIR}/tcc_rt_start.o"
-if gcc -x assembler-with-cpp -c "${SRC}/tcc_rt_start.S" -o "${STAGE2_DIR}/tcc_rt_start.o" 2>"${TMP}/stage2_compile_tcc_rt_start.log"; then
+# 编译 tcc_rt_start.S（汇编文件，用种子 tas 汇编）
+printf "  ${BLUE}[tas]${RESET} %s → %s ... " "tcc_rt_start.S" "${STAGE2_DIR}/tcc_rt_start.o"
+if ${SEED_TAS} "${SRC}/tcc_rt_start.S" -o "${STAGE2_DIR}/tcc_rt_start.o" 2>"${TMP}/stage2_compile_tcc_rt_start.log"; then
     printf "${GREEN}ok${RESET}\n"
 else
     printf "${RED}FAIL${RESET}（日志: ${TMP}/stage2_compile_tcc_rt_start.log）\n"
@@ -164,8 +156,10 @@ done
 # ─── 汇总 ──────────────────────────────────────────────────────────
 
 printf "\n${BLUE}═══════════════════════════════════════════════════════════${RESET}\n"
-printf "${BLUE}  Stage-2 自举测试结果${RESET}\n"
+printf "${BLUE}  种子自举测试结果${RESET}\n"
 printf "${BLUE}═══════════════════════════════════════════════════════════${RESET}\n"
+printf "  种子 tcc:       ${SEED_TCC}\n"
+printf "  种子 tas:       ${SEED_TAS}\n"
 printf "  ${GREEN}%d passed${RESET}, ${RED}%d failed${RESET}, %d total\n" "${ok}" "${fail}" "${total}"
 printf "  Stage-2 tcc:     ${BUILD}/tcc-stage2\n"
 printf "  Stage-2 目标文件: ${STAGE2_DIR}/\n"
