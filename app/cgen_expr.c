@@ -649,7 +649,6 @@ void cgen_expr(AstNode *node) {
                         else if (locals[i].element_size > 0)
                             elem_size = locals[i].element_size;
                         elem_unsigned = locals[i].elem_is_unsigned;
-
                 }
                 if (i < 0) {
                     for (i = 0; i < sym_count; i++) {

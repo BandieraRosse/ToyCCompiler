@@ -2117,7 +2117,11 @@ AstNode *parse_compound_statement(Parser *p) {
                             /* type_size 保持元素类型大小（不改写成 total size），
                              * 以便 cgen.c 的 is_array 判断能正确识别 */
                             decl->elem_size = elem_ts;
-                            decl->base_elem_size = elem_ts;
+                            /* base_elem_size: 指针数组如 char *arr[] 的基础元素是 char(ts) 而非指针 */
+                            if (dv_ptrs > 0)
+                                decl->base_elem_size = (ts > 0 ? ts : 4);
+                            else
+                                decl->base_elem_size = elem_ts;
                             decl->is_array = 1;
                             /* 更新局部变量表的大小 */
                             if (decl->name && *decl->name) {
