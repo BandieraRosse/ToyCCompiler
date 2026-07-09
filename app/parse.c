@@ -2717,6 +2717,8 @@ AstNode *parse_program(Parser *p) {
                         global_typedef_tag = typedef_table[pti].name; break; } } }
         }
         int typesize = parse_type_specifier(p);
+        /* 保存返回类型的 struct tag（其后 parse_parameter_list 会覆盖 last_struct_tag） */
+        const char *ret_struct_tag = last_struct_tag;
         if (typesize < 0) {
             error_at(p, "expected type specifier");
             break;
@@ -2779,6 +2781,17 @@ AstNode *parse_program(Parser *p) {
                     parsed_func_ret_sizes[parsed_func_ret_count] = typesize;
                     parsed_func_ret_count++;
                 }
+                /* 记录 struct 返回类型的 tag（供 AST_MEMBER .member 查找成员偏移） */
+                if (fptr_level == 0 && typesize > 8 && parse_func_ret_count < MAX_PARSE_FUNC_RET) {
+                    StructType *ret_st = NULL;
+                    if (ret_struct_tag && *ret_struct_tag)
+                        ret_st = find_struct_tag(ret_struct_tag);
+                    if (ret_st) {
+                        parse_func_ret_name[parse_func_ret_count] = fname;
+                        parse_func_ret_type[parse_func_ret_count] = ret_st;
+                        parse_func_ret_count++;
+                    }
+                }
                 consume(p);
             } else if (peek(p).kind == TOK_EQ) {
                 /* 函数指针变量带初始化器：int (*f)(args) = value; */
@@ -2816,9 +2829,11 @@ AstNode *parse_program(Parser *p) {
                 func->ival = pcount;
                 func->type_size = (fptr_level > 0) ? 8 : typesize;  /* 存储返回类型大小：指针返回 8 字节，struct 按值返回使用原大小 */
                 /* 记录 struct 返回类型（供解析期 func().member 使用） */
-                if (fptr_level == 0 && typesize > 8 && last_struct_tag && *last_struct_tag) {
-                    StructType *ret_st = find_struct_tag(last_struct_tag);
-                    if (ret_st && parse_func_ret_count < MAX_PARSE_FUNC_RET) {
+                if (fptr_level == 0 && typesize > 8 && parse_func_ret_count < MAX_PARSE_FUNC_RET) {
+                    StructType *ret_st = NULL;
+                    if (ret_struct_tag && *ret_struct_tag)
+                        ret_st = find_struct_tag(ret_struct_tag);
+                    if (ret_st) {
                         parse_func_ret_name[parse_func_ret_count] = fname;
                         parse_func_ret_type[parse_func_ret_count] = ret_st;
                         parse_func_ret_count++;
