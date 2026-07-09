@@ -2163,8 +2163,8 @@ void cgen_expr(AstNode *node) {
                 SEARCH_LOCAL(i, node->left->name);
                 if (i >= 0) {
                         int total_off = locals[i].offset + member_off;
-                        if (node->type_size > 8) {
-                            /* 数组成员：退化为指针 */
+                        if (node->type_size > 8 || node->is_array) {
+                            /* 数组成员（含 <=8 字节）：退化为指针 */
                             lea_from_rbp(total_off);
                             node->type_size = 8;
                         } else if (node->type_size == 8)
@@ -2239,7 +2239,7 @@ void cgen_expr(AstNode *node) {
                     e1(0x48); e1(0x01); e1(0xC8);  /* add rax, rcx (64-bit — 地址运算) */
                 }
                 /* 从地址加载值（数组/大结构体成员不加载，退化为指针） */
-                if (node->type_size > 8) {
+                if (node->type_size > 8 || node->is_array) {
                     node->type_size = 8;  /* 退化为指针 */
                 } else if (node->type_size == 8) {
                     e1(0x48); e1(0x8B); e1(0x00);  /* mov rax, [rax] */
@@ -2267,7 +2267,7 @@ void cgen_expr(AstNode *node) {
                 e1(0x48); e1(0x01); e1(0xC8);  /* add rax, rcx (64-bit) */
             }
             /* 从地址加载值（数组/大结构体成员不加载，退化为指针） */
-            if (node->type_size > 8) {
+            if (node->type_size > 8 || node->is_array) {
                 node->type_size = 8;  /* 退化为指针 */
             } else if (node->type_size == 8) {
                 e1(0x48); e1(0x8B); e1(0x00);  /* mov rax, [rax] */

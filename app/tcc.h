@@ -436,6 +436,7 @@ typedef struct {
     int size;
     int elem_size;      /* 指针成员指向的元素大小（long*→8, int*→4），数组成员的元素大小 */
     int is_unsigned;    /* 成员是否为 unsigned 类型 */
+    int memb_is_array;  /* 1=数组成员, 0=指针或标量（用于 init 数据发射宽度计算） */
     const char *member_struct_tag;  /* 如果此成员本身是 struct 类型（非指针），存 struct 标签名；否则 NULL */
 } Member;
 

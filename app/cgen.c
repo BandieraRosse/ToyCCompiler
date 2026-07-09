@@ -1041,12 +1041,31 @@ static void cgen_emit_data_init(AstNode *node) {
     int items_per_elem = node->init_items_per_elem;
     if (items_per_elem <= 0) items_per_elem = node->init_count;
 
+    /* 获取 struct_type 用于成员对齐 */
+    StructType *st = node->struct_type;
+    int mi = 0;        /* 当前成员索引 */
+    int memb_sub = 0;  /* 数组成员内的子索引 */
+    int memb_align = 1;/* 当前成员的对齐 */
+    int has_struct = (st && st->member_count > 0);
+    int has_widths = has_struct ? 0 : 0; /* 在成员展开匹配时设为 1 */
+
     int item_idx = 0;
     int elem_byte_count = 0;
     int i;
 
     for (i = 0; i < node->init_count; i++) {
         InitItem *it = &node->init_items[i];
+
+        /* 如果正在处理 struct 成员，对齐到成员的自然对齐 */
+        if (has_widths && has_struct && mi < st->member_count && memb_sub == 0) {
+            Member *m = &st->members[mi];
+            memb_align = (m->size >= 8) ? 8 : (m->size >= 4) ? 4 : (m->size >= 2) ? 2 : 1;
+            /* 填充到对齐边界 */
+            while (elem_byte_count & (memb_align - 1)) {
+                data_buf[data_size++] = 0;
+                elem_byte_count++;
+            }
+        }
 
         if (it->type == INIT_TYPE_STR) {
             /* ── 字符串：创建 .LC 符号，发射 8 字节 + R_X86_64_64 ── */
@@ -1116,23 +1135,66 @@ static void cgen_emit_data_init(AstNode *node) {
             }
 
             elem_byte_count += 8;
+            if (has_widths && has_struct) {
+                /* STR 对应指针成员，总是 1 个 item，移到下一成员 */
+                mi++;
+                memb_sub = 0;
+            }
         } else {
-            /* ── 整数值：按元素类型大小发射 LE ── */
+            /* ── 整数值：按 item 宽度或元素类型大小发射 LE ── */
+            int iw = 4; /* 默认宽度 */
+            if (has_widths && has_struct && mi < st->member_count) {
+                Member *m = &st->members[mi];
+                if (m->memb_is_array && m->elem_size > 0 && m->size > m->elem_size)
+                    iw = m->elem_size;
+                else if (m->size >= 8 && m->elem_size > 0)
+                    iw = 8;  /* 指针 */
+                else
+                    iw = m->size;
+            } else if (elem_size == 1) {
+                iw = 1;
+            } else if (elem_size == 2) {
+                iw = 2;
+            }
+
             long v = it->ival;
-            if (elem_size == 1) {
+            if (iw == 1) {
                 data_buf[data_size++] = v & 0xFF;
                 elem_byte_count += 1;
-            } else if (elem_size == 2) {
+            } else if (iw == 2) {
                 data_buf[data_size++] = v & 0xFF;
                 data_buf[data_size++] = (v >> 8) & 0xFF;
                 elem_byte_count += 2;
-            } else {
-                /* 默认 4 字节（兼容现有行为） */
+            } else if (iw == 4) {
                 data_buf[data_size++] = v & 0xFF;
                 data_buf[data_size++] = (v >> 8) & 0xFF;
                 data_buf[data_size++] = (v >> 16) & 0xFF;
                 data_buf[data_size++] = (v >> 24) & 0xFF;
                 elem_byte_count += 4;
+            } else {
+                /* ≥8 字节（如 NULL 指针的 0 值）：发射 8 字节 */
+                data_buf[data_size++] = v & 0xFF;
+                data_buf[data_size++] = (v >> 8) & 0xFF;
+                data_buf[data_size++] = (v >> 16) & 0xFF;
+                data_buf[data_size++] = (v >> 24) & 0xFF;
+                data_buf[data_size++] = (v >> 32) & 0xFF;
+                data_buf[data_size++] = (v >> 40) & 0xFF;
+                data_buf[data_size++] = (v >> 48) & 0xFF;
+                data_buf[data_size++] = (v >> 56) & 0xFF;
+                elem_byte_count += 8;
+            }
+
+            /* 更新 struct 成员计数（数组展开处理） */
+            if (has_widths && has_struct && mi < st->member_count) {
+                Member *m = &st->members[mi];
+                int item_count = 1;
+                if (m->memb_is_array && m->elem_size > 0 && m->size > m->elem_size)
+                    item_count = m->size / m->elem_size;
+                memb_sub++;
+                if (memb_sub >= item_count) {
+                    mi++;
+                    memb_sub = 0;
+                }
             }
         }
 
@@ -1146,6 +1208,9 @@ static void cgen_emit_data_init(AstNode *node) {
             }
             elem_byte_count = 0;
             item_idx = 0;
+            mi = 0;
+            memb_sub = 0;
+            memb_align = 1;
         }
     }
     /* 最后一个元素的尾部填充 */

@@ -601,6 +601,7 @@ static AstNode *parse_postfix(Parser *p) {
                         n->type_size = st->members[fi].size;
                         n->is_unsigned = st->members[fi].is_unsigned;
                         n->elem_size = st->members[fi].elem_size;
+                        n->is_array = st->members[fi].memb_is_array;
                         /* 如果此成员是 struct 类型，传播 struct_type 供链式访问 */
                         if (st->members[fi].member_struct_tag)
                             n->struct_type = find_struct_tag(st->members[fi].member_struct_tag);
@@ -627,6 +628,7 @@ static AstNode *parse_postfix(Parser *p) {
                             n->type_size = tag_table[ti].members[mi].size;
                             n->is_unsigned = tag_table[ti].members[mi].is_unsigned;
                             n->elem_size = tag_table[ti].members[mi].elem_size;
+                            n->is_array = tag_table[ti].members[mi].memb_is_array;
                             if (tag_table[ti].members[mi].member_struct_tag)
                                 n->struct_type = find_struct_tag(tag_table[ti].members[mi].member_struct_tag);
                         }
@@ -1187,6 +1189,7 @@ static int parse_struct_body(Parser *p, Member *members, int *out_count) {
                     members[count].elem_size = 8;   /* 多级指针 → 指针大小 */
                 else
                     members[count].elem_size = 0;
+                members[count].memb_is_array = is_array;
                 /* 记录 struct 标签，无论成员是否为指针（这样 p->member->sub
                  * 链式访问的 struct_type 传播能正确工作）。非 struct 类型时
                  * member_tag_for_chain 为 NULL，不影响。 */
@@ -1255,6 +1258,7 @@ static int parse_struct_body(Parser *p, Member *members, int *out_count) {
                         members[count].elem_size = 8;
                     else
                         members[count].elem_size = 0;
+                    members[count].memb_is_array = comma_is_array;
                     members[count].member_struct_tag = member_tag_for_chain;
                     count++;
                     offset += member_sz;
@@ -2924,6 +2928,13 @@ AstNode *parse_program(Parser *p) {
                         gvar->elem_is_ptr = (gv_ptrs > 0 && gv_bracket_count > 0) ? 1 : 0;
                         gvar->is_array = (gv_bracket_count > 0) ? 1 : 0;  /* int arr[1] 也能正确标记 */
                         gvar->elem_is_unsigned = (gv_ptrs > 0 || gv_bracket_count > 0) ? last_type_is_unsigned : 0;
+                        /* 设置 struct_type（供 cgen 按成员实际大小发射初始化数据） */
+                        {
+                            const char *gv_tag = global_typedef_tag ? global_typedef_tag :
+                                (last_struct_tag && last_struct_member_count > 0 ? last_struct_tag : NULL);
+                            if (gv_tag)
+                                gvar->struct_type = resolve_struct_type(gv_tag);
+                        }
                         *tail = gvar;
                         tail = &gvar->next;
                     }
