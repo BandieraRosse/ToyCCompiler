@@ -873,7 +873,10 @@ static void cgen_func_def(AstNode *func) {
     if (func->name && strcmp(func->name, "main") == 0 && global_init_prog) {
         AstNode *gn;
         for (gn = global_init_prog->body; gn; gn = gn->next) {
-            if (gn->kind == AST_VAR_DECL && gn->expr) {
+            /* init_count > 0 表示花括号初始化器，数据已在 Phase 1
+             * 通过 cgen_emit_data_init 发射到 .data 段。gn->expr 对这类
+             * 变量不存在或为 dummy (ival=0)，运行时写入会覆盖数据段。 */
+            if (gn->kind == AST_VAR_DECL && gn->expr && gn->init_count <= 0) {
                 cgen_expr(gn->expr);
                 int si = -1;
                 int i;

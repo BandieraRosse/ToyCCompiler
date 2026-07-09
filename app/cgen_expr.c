@@ -648,6 +648,7 @@ void cgen_expr(AstNode *node) {
                             elem_size = locals[i].base_elem_size;
                         else if (locals[i].element_size > 0)
                             elem_size = locals[i].element_size;
+                        elem_unsigned = locals[i].elem_is_unsigned;
 
                 }
                 if (i < 0) {
@@ -656,6 +657,7 @@ void cgen_expr(AstNode *node) {
                             if (i < MAX_SYMS) {
                                 if (global_base_elem_size[i] > 0)
                                     elem_size = global_base_elem_size[i];
+                                elem_unsigned = global_elem_unsigned[i];
                             }
                             break;
                         }
@@ -1293,6 +1295,15 @@ void cgen_expr(AstNode *node) {
                     e1(0xB9); e4(ptelem); e1(0xF7); e1(0xF9);  /* mov ecx, ptelem; idiv ecx */
                 }
             }
+        }
+        /* Signed char result truncation for cast expressions.
+         * When (char)expr sets type_size=1 but the value is still 32-bit,
+         * truncate to signed char range and sign-extend. */
+        if (node->type_size == 1 && !node->is_unsigned &&
+            node->op != TOK_EQ_EQ && node->op != TOK_NOT_EQ &&
+            node->op != TOK_LESS && node->op != TOK_GREATER &&
+            node->op != TOK_LESS_EQ && node->op != TOK_GREATER_EQ) {
+            e1(0x0F); e1(0xBE); e1(0xC0);  /* movsbl %al, %eax */
         }
         break;
     }

@@ -853,6 +853,13 @@ static AstNode *parse_unary(Parser *p) {
                         if (cast_to_double) inner->is_float = 1;
                         inner->type_size = csz;
                         inner->is_unsigned = last_type_is_unsigned;
+                        /* 对 signed char/short 常量值做截断符号扩展 */
+                        if (inner->kind == AST_CONSTANT) {
+                            if (csz == 1 && !last_type_is_unsigned)
+                                inner->ival = (long)(signed char)(int)inner->ival;
+                            else if (csz == 2 && !last_type_is_unsigned)
+                                inner->ival = (long)(signed short)(int)inner->ival;
+                        }
                     } else {
                         inner->elem_size = csz;
                         inner->is_unsigned = last_type_is_unsigned;

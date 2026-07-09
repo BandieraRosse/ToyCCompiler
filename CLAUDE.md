@@ -26,7 +26,7 @@
 │   └── elf.h           # ELF64 结构体定义
 ├── compiler-tests/     # 测试文件
 │   ├── basic/          # 常规测试（tcc 编译 + tcc_rt 链接，28 个）
-│   ├── selfhost/       # 自包含测试（tcc 独立编译，无 tcc_rt 依赖，31 个）
+│   ├── selfhost/       # 自包含测试（tcc 独立编译，无 tcc_rt 依赖，34 个）
 │   ├── source/         # 源文件独立测试（验证单个 .c 文件的逻辑，9 个）
 │   └── pending/        # 待修复 bug 的复现用例
 ├── ld.script           # 链接脚本
@@ -41,7 +41,7 @@ make                         # 构建 tcc、tpp、tas → build/
 make test                    # 常规测试（28 个）
 make test 03                 # 指定编号测试
 make test 03 07              # 多编号测试
-make test-selfhost           # 自包含测试（31 个）
+make test-selfhost           # 自包含测试（34 个）
 make test-source             # 源文件独立测试（gcc 编译，9 个）
 make test-source-tcc         # 源文件独立测试（tcc 编译，9 个）
 ./bootstrap-selfhost.sh      # 自举：stage-1 → stage-2 → 测试
@@ -54,7 +54,7 @@ make clean
 | 测试套件 | 通过/总数 | 说明 |
 |----------|-----------|------|
 | `make test` | 28/28 ✅ | tcc 编译 + ld 链接 tcc_rt 运行时 |
-| `make test-selfhost` | 31/31 ✅ | tcc 独立编译，无 tcc_rt 依赖 |
+| `make test-selfhost` | **34/34 ✅** | tcc 独立编译，无 tcc_rt 依赖 |
 | `make test-source`（gcc） | 9/9 ✅ | gcc 编译源文件独立测试 |
 | `make test-source-tcc`（tcc） | 9/9 ✅ | tcc 编译源文件独立测试 |
 | `bootstrap-selfhost.sh`（stage-2） | 31/31 ✅ | stage-2 tcc 编译 selfhost 测试 |
@@ -98,7 +98,7 @@ make clean
 
 ```sh
 make test             # 28/28 ✅
-make test-selfhost    # 31/31 ✅
+make test-selfhost    # 34/34 ✅
 ./bootstrap-to-10.sh  # stage-3 → stage-10 字节级完全一致 ✅
 ```
 
