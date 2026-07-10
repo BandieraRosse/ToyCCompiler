@@ -90,6 +90,7 @@ make clean
 | `goto` 跨函数 | 未检查 |
 | 宽字符/宽字符串 | 未实现 |
 | `-I` include 路径、`-MD` 依赖追踪 | 静默忽略（tcc 参数解析极简） |
+| `func().non_first_member`（返回 struct 上访问非首个成员） | AST_MEMBER 的 push_rax 覆盖隐藏缓冲区，见 `compiler-tests/selfhost/29_struct_return_expr.c` |
 
 ### 已修复的历史限制
 
