@@ -148,11 +148,18 @@ static void do_include(const char *s, int *pos, int len, OutBuf *out, int depth)
     while (*pos < len && s[*pos] != '"' && s[*pos] != '<') (*pos)++;
     if (*pos >= len) return;
     int delim = s[*pos]; (*pos)++;
-    int fs = *pos; while (*pos < len && s[*pos] != delim) (*pos)++;
+    int close_delim = (delim == '<') ? '>' : delim;
+    int fs = *pos; while (*pos < len && s[*pos] != close_delim) (*pos)++;
     int flen = *pos - fs; if (*pos < len) (*pos)++;
     if (flen <= 0) return;
     char fn[512]; int fi;
     for (fi = 0; fi < flen && fi < 500; fi++) { fn[fi] = s[fs + fi]; } fn[fi] = '\0';
+
+    /* #include <...>：标准库头文件，tcc 不支持 */
+    if (delim == '<') {
+        __printf("tcc: standard library header '<%s>' not supported (tcc is freestanding, no libc headers)\n", fn);
+        return;
+    }
 
     /* 对 #include "..."，先搜索源文件所在目录 */
     if (delim == '"' && current_source_dir[0] && !inc_path_added_source_dir) {

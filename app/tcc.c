@@ -113,6 +113,10 @@ int main(int argc, char *argv[]) {
                 debug = 1;
             else if (argv[i][1] == 'd')
                 debug = 1;
+            else if (argv[i][1] == 'I' && argv[i][2] == '\0' && i + 1 < argc)
+                add_include_path(argv[++i]);
+            else if (argv[i][1] == 'I')
+                add_include_path(argv[i] + 2);
         } else {
             input_path = argv[i];
         }

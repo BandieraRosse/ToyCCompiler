@@ -32,16 +32,37 @@ int main(int argc, char *argv[]) {
     add_include_path("./arch/x86_64");
     
     int src_len;
-    int fd = __openat(AT_FDCWD, argv[1], O_RDONLY, 0);
+    int fd;
+    const char *input = NULL;
+    const char *output = NULL;
+    int i;
+    for (i = 1; i < argc; i++) {
+        if (argv[i][0] == '-') {
+            if (argv[i][1] == 'I' && argv[i][2] == '\0' && i + 1 < argc)
+                add_include_path(argv[++i]);
+            else if (argv[i][1] == 'I')
+                add_include_path(argv[i] + 2);
+        } else if (!input) {
+            input = argv[i];
+        } else if (!output) {
+            output = argv[i];
+        }
+    }
+    if (!input || !output) {
+        __write(2, "用法: tpp <输入.c> <输出.i>\n", 34);
+        return 1;
+    }
+
+    fd = __openat(AT_FDCWD, input, O_RDONLY, 0);
     off_t size = __lseek(fd, 0, SEEK_END); __lseek(fd, 0, SEEK_SET);
     char *src = (char *)tlibc_malloc(size + 2);
     __read(fd, src, size); __close(fd);
     src[size] = '\0'; src_len = size;
-    
+
     int pp_len;
-    char *pp = preprocess(src, src_len, argv[1], &pp_len);
+    char *pp = preprocess(src, src_len, input, &pp_len);
     
-    int out = __openat(AT_FDCWD, argv[2], O_WRONLY|O_CREAT|O_TRUNC, 0644);
+    int out = __openat(AT_FDCWD, output, O_WRONLY|O_CREAT|O_TRUNC, 0644);
     __write(out, pp, pp_len);
     __close(out);
     return 0;
