@@ -61,9 +61,10 @@ C 编译器并不稀缺。GCC 有一千五百万行代码。LLVM 是一个庞大
 
 ```sh
 make test             # 29/29 ✅
-make test-selfhost    # 35/35 ✅
+make test-selfhost    # 38/38 ✅
 make test-source      # 8/8   ✅
-make test-tld         # 35/35 ✅
+make test-tld         # 38/38 ✅
+make test-error       # 16/16 ✅
 make test-tld-self    # 自举收敛 ✅
 ./bootstrap-to-10.sh  # stage-2→10 字节级一致 ✅
 ```

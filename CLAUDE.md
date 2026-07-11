@@ -27,7 +27,7 @@
 │   └── elf.h           # ELF64 结构体定义
 ├── compiler-tests/     # 测试文件
 │   ├── basic/          # 常规测试（tcc 编译 + tcc_rt 链接，29 个）
-│   ├── selfhost/       # 自包含测试（tcc 独立编译，无 tcc_rt 依赖，35 个）
+│   ├── selfhost/       # 自包含测试（tcc 独立编译，无 tcc_rt 依赖，38 个）
 │   ├── source/         # 源文件独立测试（验证单个 .c 文件的逻辑，8 个）
 │   ├── tld/            # tld 多文件链接测试
 │   └── pending/        # 待修复 bug 的复现用例
@@ -43,31 +43,33 @@
 ```sh
 make                              # 自举构建（bootstrap/tcc + bootstrap/tas + bootstrap/tld）
 make test                         # 常规测试（29 个）
-make test-selfhost                # 自包含测试（35 个）
+make test-selfhost                # 自包含测试（38 个）
 make test-source                  # 源文件独立测试（8 个）
-make test-tld                     # tld 链接测试（35 个）
+make test-tld                     # tld 链接测试（38 个）
+make test-error                   # 错误报告测试（16 个）
 make test-tld-multifile           # tld 多文件链接测试
 make test-tld-self                # tld 自举验证（stage-1 → stage-2 → 收敛）
 make update-bootstrap             # 用最新 build/ 产物更新 bootstrap/ 种子
-./bootstrap-selfhost.sh           # 自举测试：bootstrap/tcc → stage-2 → 35 测试
+./bootstrap-selfhost.sh           # 自举测试：bootstrap/tcc → stage-2 → 38 测试
 ./bootstrap-to-10.sh              # 全链收敛验证（stage-1 → stage-10）
 make clean
 ```
 
 全链零外部依赖（仅 make）。`bootstrap/tcc` + `bootstrap/tas` + `bootstrap/tld` 是 git 追踪的种子二进制。
 
-## 测试状态（2026-07-10）
+## 测试状态（2026-07-11）
 
 | 测试套件 | 通过/总数 | 说明 |
 |----------|-----------|------|
 | `make test` | 29/29 ✅ | tcc 编译 + tld 链接 tcc_rt 运行时 |
-| `make test-selfhost` | **36/36 ✅** | tcc 独立编译，无 tcc_rt 依赖 |
+| `make test-selfhost` | **38/38 ✅** | tcc 独立编译，无 tcc_rt 依赖 |
 | `make test-source` | 8/8 ✅ | tcc 编译源文件独立测试 |
-| `make test-tld` | **36/36 ✅** | selfhost 测试 × tld 链接 |
+| `make test-tld` | **38/38 ✅** | selfhost 测试 × tld 链接 |
 | `make test-tld-multifile` | ✅ | 多 .o 文件交叉引用链接 |
 | `make test-tld-self` | **自举收敛 ✅** | tld 自链接 stage-1→stage-2 字节级一致 |
-| `bootstrap-selfhost.sh` | 36/36 ✅ | 种子自举 → stage-2 全部测试通过 |
-| `bootstrap-to-10.sh` | stage-5→10 字节级一致 ✅ | 全链收敛验证（头尾完整测试） |
+| `make test-error` | **16/16 ✅** | 错误报告测试 |
+| `bootstrap-selfhost.sh` | 38/38 ✅ | 种子自举 → stage-2 全部测试通过 |
+| `bootstrap-to-10.sh` | stage-2→10 字节级一致 ✅ | 全链收敛验证（头尾完整测试） |
 
 ## 设计原则
 
@@ -99,7 +101,7 @@ make test             # 29/29 ✅
 make test-selfhost    # 38/38 ✅
 make test-source      # 8/8 ✅
 make test-tld         # 38/38 ✅
-make test-error       # 7/7 ✅
+make test-error       # 16/16 ✅
 make test-tld-self    # 自举收敛 ✅
 ./bootstrap-to-10.sh  # stage-2→10 字节级完全一致 ✅
 ```

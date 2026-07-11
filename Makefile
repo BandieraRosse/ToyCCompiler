@@ -6,8 +6,9 @@
 #   make test                   运行常规测试（29 个）
 #   make test 03                指定编号测试
 #   make test 03 07             多编号测试
-#   make test-selfhost          自包含测试（35 个）
+#   make test-selfhost          自包含测试（38 个）
 #   make test-source            源文件独立测试（8 个）
+#   make test-error             错误报告测试（16 个）
 #   make update-bootstrap       用 build 产物更新 bootstrap/ 种子
 #   make clean
 #
